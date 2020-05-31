@@ -22,8 +22,6 @@ entity fmh_frame_buffer is
 		reset: in std_logic;
 		
 		-- avalon master for buffer memory
-		memory_clock: in std_logic;
-		memory_reset: in std_logic;
 		memory_address: out std_logic_vector(memory_address_width - 1 downto 0);
 		memory_burstcount: out std_logic_vector(memory_burstcount_width - 1 downto 0);
 		memory_readdata: in std_logic_vector(memory_data_width - 1 downto 0);
