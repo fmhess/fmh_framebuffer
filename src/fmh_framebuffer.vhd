@@ -5,7 +5,7 @@ library IEEE;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
  
-entity fmh_frame_buffer is
+entity fmh_framebuffer is
 	generic(
 		bits_per_color: positive := 8;
 		colors_per_pixel_per_plane: positive := 4;
@@ -44,9 +44,9 @@ entity fmh_frame_buffer is
 		video_out_startofpacket: out std_logic;
 		video_out_endofpacket: out std_logic
 	);
-end fmh_frame_buffer;
+end fmh_framebuffer;
 
-architecture fmh_frame_buffer_arch of fmh_frame_buffer is
+architecture fmh_framebuffer_arch of fmh_framebuffer is
 
 	signal safe_reset: std_logic;
 	type packet_send_state_enum is (packet_send_state_idle, packet_send_state_command, packet_send_state_video);
@@ -192,4 +192,4 @@ begin
 	memory_read <= '0';
 	slave_readdata <= (others => '0');
 	slave_irq <= '0';
-end fmh_frame_buffer_arch;
+end fmh_framebuffer_arch;
