@@ -1,13 +1,13 @@
 .PHONY: all
-all: fmh_frame_buffer_testbench.fst \
+all: fmh_framebuffer_testbench.fst \
 
-FMH_FRAME_BUFFER_TEST_SRC = \
-	../src/fmh_frame_buffer.vhd \
-	fmh_frame_buffer_testbench.vhd
-fmh_frame_buffer_testbench.fst: $(FMH_FRAME_BUFFER_TEST_SRC)
-	nvc -a $(FMH_FRAME_BUFFER_TEST_SRC)
-	nvc -e fmh_frame_buffer_testbench
-	nvc -r fmh_frame_buffer_testbench --wave
+FMH_FRAMEBUFFER_TEST_SRC = \
+	../src/fmh_framebuffer.vhd \
+	fmh_framebuffer_testbench.vhd
+fmh_framebuffer_testbench.fst: $(FMH_FRAMEBUFFER_TEST_SRC)
+	nvc -a $(FMH_FRAMEBUFFER_TEST_SRC)
+	nvc -e fmh_framebuffer_testbench
+	nvc -r fmh_framebuffer_testbench --wave
 
 .PHONY: clean
 clean:

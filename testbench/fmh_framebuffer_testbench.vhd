@@ -1,5 +1,5 @@
 -- Author: Frank Mori Hess fmh6jj@gmail.com
--- Copyright 2020 Frank Mori Hess
+-- Copyright 2020 Fluke Corporation
 
 library IEEE;
 use ieee.std_logic_1164.all;
