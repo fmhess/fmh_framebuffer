@@ -7,10 +7,10 @@ use ieee.numeric_std.all;
  
 entity fmh_frame_buffer is
 	generic(
-		bits_per_symbol: positive := 8;
-		symbols_per_pixel_per_plane: positive := 4;
-		symbols_per_beat: positive := 4;
-		beats_per_pixel: positive := 1;
+		bits_per_color: positive := 8;
+		colors_per_pixel_per_plane: positive := 4;
+		colors_per_beat: positive := 4;
+		num_color_planes: positive := 1;
 		memory_address_width: positive := 32;
 		memory_burstcount_width: positive := 4;
 		memory_data_width: positive := 64;
@@ -42,7 +42,7 @@ entity fmh_frame_buffer is
 		-- avalon st video out
 		video_out_ready: in std_logic;
 		video_out_valid: out std_logic;
-		video_out_data: out std_logic_vector(bits_per_symbol * symbols_per_beat - 1 downto 0);
+		video_out_data: out std_logic_vector(bits_per_color * colors_per_beat - 1 downto 0);
 		video_out_startofpacket: out std_logic;
 		video_out_endofpacket: out std_logic
 	);
@@ -71,9 +71,9 @@ begin
  
 	-- generate videout out stream
 	process(safe_reset, clock)
-		constant first_width_symbol_index: positive := symbols_per_beat;
-		constant first_height_symbol_index: positive := symbols_per_beat + 4;
-		constant interlacing_symbol_index: positive := symbols_per_beat + 8;
+		constant first_width_symbol_index: positive := colors_per_beat;
+		constant first_height_symbol_index: positive := colors_per_beat + 4;
+		constant interlacing_symbol_index: positive := colors_per_beat + 8;
 		variable symbol_index: unsigned(31 downto 0);
 		variable current_column: unsigned(15 downto 0);
 		variable current_row: unsigned(15 downto 0);
@@ -111,7 +111,7 @@ begin
 				if packet_send_state = packet_send_state_command then
 					if to_X01(video_out_ready) = '1' then
 						beat_index <= beat_index + 1;
-						symbol_index_base <= symbol_index_base + symbols_per_beat;
+						symbol_index_base <= symbol_index_base + colors_per_beat;
 						video_out_valid <= '1';
 
 						if to_integer(beat_index) = 0 then
@@ -122,21 +122,21 @@ begin
 							video_out_data <= (others => '0');
 							video_out_startofpacket <= '0';
 							video_out_endofpacket <= '0';
-							for i in 0 to symbols_per_beat - 1 loop
+							for i in 0 to colors_per_beat - 1 loop
 								symbol_index := symbol_index_base + i;
 
 								if symbol_index >= first_width_symbol_index and
 									symbol_index < first_height_symbol_index then
-									video_out_data(i * bits_per_symbol + 3 downto i * bits_per_symbol) <= 
+									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
 										std_logic_vector(frame_width(15 - (to_integer(symbol_index) - first_width_symbol_index) * 4 
 											downto 12 - (to_integer(symbol_index) - first_width_symbol_index) * 4));
 								elsif symbol_index >= first_height_symbol_index and
 									symbol_index < interlacing_symbol_index then
-									video_out_data(i * bits_per_symbol + 3 downto i * bits_per_symbol) <= 
+									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
 										std_logic_vector(frame_height(15 - (to_integer(symbol_index) - first_height_symbol_index) * 4 
 											downto 12 - (to_integer(symbol_index) - first_height_symbol_index) * 4));
 								elsif symbol_index = interlacing_symbol_index then
-									video_out_data(i * bits_per_symbol + 3 downto i * bits_per_symbol) <= interlacing;
+									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= interlacing;
 									video_out_endofpacket <= '1';
 									beat_index <= (others => '0');
 									symbol_index_base <= (others => '0');
@@ -151,7 +151,7 @@ begin
 				elsif packet_send_state = packet_send_state_video then
 					if to_X01(video_out_ready) = '1' then
 						beat_index <= beat_index + 1;
-						symbol_index_base <= symbol_index_base + symbols_per_beat;
+						symbol_index_base <= symbol_index_base + colors_per_beat;
 						video_out_valid <= '1'; -- FIXME: take into account availablity of framebuffer data
 
 						if to_integer(beat_index) = 0 then
@@ -162,10 +162,10 @@ begin
 							video_out_data <= (others => '0');
 							video_out_startofpacket <= '0';
 							video_out_endofpacket <= '0';
-							video_out_data(bits_per_symbol - 1 downto 0) <= 
-								std_logic_vector(current_column(bits_per_symbol - 1 downto 0)); -- blue according to column
-							video_out_data(2 * bits_per_symbol - 1 downto bits_per_symbol) <= 
-								std_logic_vector(current_row(bits_per_symbol - 1 downto 0)); -- green according to row
+							video_out_data(bits_per_color - 1 downto 0) <= 
+								std_logic_vector(current_column(bits_per_color - 1 downto 0)); -- blue according to column
+							video_out_data(2 * bits_per_color - 1 downto bits_per_color) <= 
+								std_logic_vector(current_row(bits_per_color - 1 downto 0)); -- green according to row
 
 							-- increment column/row
 							current_column := current_column + 1;
