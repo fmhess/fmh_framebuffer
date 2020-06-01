@@ -56,11 +56,13 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal safe_reset: std_logic;
 	type packet_send_state_enum is (packet_send_state_idle, packet_send_state_command, packet_send_state_video);
 	signal packet_send_state: packet_send_state_enum;
-	constant max_frame_dimension_length: positive := 16#1fff#;
+	constant max_frame_dimension_length: positive := 16#1000#;
 	-- avalon max burstcount is biggest power of 2 that can fit into burstcount_width (so 16 for a 5 bit wide burstcount)
 	constant max_burstcount: positive := to_integer(shift_left(to_unsigned(1, memory_burstcount_width), memory_burstcount_width - 1));
 	signal frame_width: unsigned(15 downto 0);
 	signal frame_height: unsigned(15 downto 0);
+	signal requested_frame_width: unsigned(frame_width'range);
+	signal requested_frame_height: unsigned(frame_height'range);
 	signal beat_index: unsigned(31 downto 0);
 	signal symbol_index_base: unsigned(31 downto 0);
 	constant interlacing: std_logic_vector(3 downto 0) := "0010"; -- progressive
@@ -78,6 +80,8 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	type memory_burst_read_state_enum is (memory_burst_read_state_idle, memory_burst_read_state_initiate, memory_burst_read_state_collect);
 	signal memory_burst_read_state: memory_burst_read_state_enum;
 	
+	signal ready_to_send_frame: boolean;
+	signal go: std_logic;
 begin
 	
 	assert num_color_planes = 1 report "Only num_color_planes=1 is currently supported.";
@@ -92,6 +96,12 @@ begin
 		end if;
 	end process;
  
+	ready_to_send_frame <= go = '1' and 
+		to_X01(video_out_ready) = '1' and
+		to_integer(buffer_base_address) /= 0 and
+		to_integer(requested_frame_width) /= 0 and
+		to_integer(requested_frame_height) /= 0;
+	
 	-- generate videout out stream
 	process(safe_reset, clock)
 		constant first_width_symbol_index: positive := colors_per_beat;
@@ -127,9 +137,9 @@ begin
 				symbol_index_base <= (others => '0');
 				current_column := (others => '0');
 				current_row := (others => '0');
-				frame_width <= to_unsigned(800, frame_width'length); -- FIXME: hard coding for now
-				frame_height <= to_unsigned(480, frame_width'length); -- FIXME: hard coding for now
-				if to_X01(video_out_ready) = '1' then
+				frame_width <= requested_frame_width;
+				frame_height <= requested_frame_height;
+				if ready_to_send_frame then
 					packet_send_state <= packet_send_state_command;
 				end if;
 			else
@@ -268,16 +278,44 @@ begin
 		end if;
 	end process;
 
-	-- slave io port
+	-- slave io port reads
 	process(safe_reset, clock)
 	begin
 		if to_X01(safe_reset) = '1' then
 			slave_readdata <= (others => '0');
-			buffer_base_address <= (others => '0');
 		elsif rising_edge(clock) then
 		end if;
 	end process;
 	
+	-- slave io port writes
+	process(safe_reset, clock)
+		variable prev_slave_write: std_logic;
+	begin
+		if to_X01(safe_reset) = '1' then
+			buffer_base_address <= (others => '0');
+			prev_slave_write := '0';
+			requested_frame_width <= (others => '0');
+			requested_frame_height <= (others => '0');
+			go <= '0';
+		elsif rising_edge(clock) then
+			if prev_slave_write = '0' and to_X01(slave_write) = '1' then
+				case to_integer(unsigned(slave_address)) is
+				when 16#0# =>
+					go <= to_X01(slave_writedata(0));
+				when 16#4# =>
+					buffer_base_address <= unsigned(to_X01(slave_writedata));
+				when 16#8# =>
+					requested_frame_width <= unsigned(to_X01(slave_writedata(requested_frame_width'length - 1 downto 0)));
+				when 16#9# =>
+					requested_frame_height <= unsigned(to_X01(slave_writedata(requested_frame_height'length - 1 downto 0)));
+				when others =>
+				end case;
+			end if;
+			
+			prev_slave_write := slave_write;
+		end if;
+	end process;
+
 	-- unimplemented stubs
 	slave_irq <= '0';
 end fmh_framebuffer_arch;
