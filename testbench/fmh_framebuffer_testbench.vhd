@@ -5,13 +5,13 @@ library IEEE;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-entity fmh_frame_buffer_testbench is
-end fmh_frame_buffer_testbench;
+entity fmh_framebuffer_testbench is
+end fmh_framebuffer_testbench;
      
-architecture behav of fmh_frame_buffer_testbench is
-	constant bits_per_symbol: positive := 8;
-	constant symbols_per_beat: positive := 4;
-	constant beats_per_pixel: positive := 1;
+architecture behav of fmh_framebuffer_testbench is
+	constant bits_per_color: positive := 8;
+	constant colors_per_beat: positive := 4;
+	constant colors_per_pixel_per_plane: positive := 4;
 	constant memory_address_width : positive := 32;
 	constant memory_burstcount_width : positive := 4;
 	constant memory_data_width : positive := 32;
@@ -34,7 +34,7 @@ architecture behav of fmh_frame_buffer_testbench is
 	signal slave_irq: std_logic;
 	signal video_out_ready: std_logic;
 	signal video_out_valid: std_logic;
-	signal video_out_data: std_logic_vector(bits_per_symbol * symbols_per_beat - 1 downto 0);
+	signal video_out_data: std_logic_vector(bits_per_color * colors_per_beat - 1 downto 0);
 	signal video_out_startofpacket: std_logic;
 	signal video_out_endofpacket: std_logic;
 
@@ -43,11 +43,11 @@ architecture behav of fmh_frame_buffer_testbench is
 	shared variable test_finished : boolean := false;
 
 	begin
-	my_frame_buffer : entity work.fmh_frame_buffer
+	my_framebuffer : entity work.fmh_framebuffer
 		generic map (
-			bits_per_symbol => bits_per_symbol,
-			symbols_per_beat => symbols_per_beat,
-			beats_per_pixel => beats_per_pixel,
+			bits_per_color => bits_per_color,
+			colors_per_beat => colors_per_beat,
+			colors_per_pixel_per_plane => colors_per_pixel_per_plane,
 			memory_address_width => memory_address_width,
 			memory_burstcount_width => memory_burstcount_width,
 			memory_data_width => memory_data_width,
@@ -57,8 +57,6 @@ architecture behav of fmh_frame_buffer_testbench is
 		port map (
 			clock => clock,
 			reset => reset,
-			memory_clock => clock,
-			memory_reset => reset,
 			memory_address => memory_address,
 			memory_burstcount => memory_burstcount,
 			memory_readdata => memory_readdata,
