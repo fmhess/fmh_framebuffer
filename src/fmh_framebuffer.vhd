@@ -149,8 +149,8 @@ begin
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
 				if ready_to_send_frame then
-					prefetch_row_index(to_integer(current_row(num_cache_rows downto 0))) <= current_row;
-					request_prefetch(to_integer(current_row(num_cache_rows downto 0))) <= '1';
+					prefetch_row_index(to_integer(current_row(num_cache_rows - 1 downto 0))) <= current_row;
+					request_prefetch(to_integer(current_row(num_cache_rows - 1 downto 0))) <= '1';
 					packet_send_state <= packet_send_state_command;
 				end if;
 			else
@@ -211,16 +211,17 @@ begin
 							video_out_data <= (others => '0');
 							video_out_startofpacket <= '0';
 							video_out_endofpacket <= '0';
-							video_out_data(bits_per_color - 1 downto 0) <= 
-								std_logic_vector(current_column(bits_per_color - 1 downto 0)); -- blue according to column
-							video_out_data(2 * bits_per_color - 1 downto bits_per_color) <= 
-								std_logic_vector(current_row(bits_per_color - 1 downto 0)); -- green according to row
-
+							
+							for i in 0 to (colors_per_pixel_per_plane * bits_per_color) - 1 loop
+								video_out_data(i) <= 
+									row_cache(to_integer(current_row(num_cache_rows - 1 downto 0)))(to_integer(frame_width * current_row + current_column) * memory_bytes_per_pixel_per_plane + i / 8)(i mod 8);
+							end loop;
+							
 							-- prefetch next row
 							next_row := current_row + row_increment;
 							if to_integer(current_column) = 0 then -- FIXME: will break when we support horizontal flip
 								prefetch_row_index(to_integer(next_row(num_cache_rows downto 0))) <= next_row;
-								request_prefetch(to_integer(next_row(num_cache_rows downto 0))) <= '1';
+								request_prefetch(to_integer(next_row(num_cache_rows - 1 downto 0))) <= '1';
 							end if;
 							-- increment column/row
 							current_column := current_column + 1;
