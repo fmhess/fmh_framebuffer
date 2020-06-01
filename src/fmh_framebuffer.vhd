@@ -76,7 +76,8 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	type row_cache_type is array (max_frame_width * memory_bytes_per_pixel_per_plane - 1 downto 0) of std_logic_vector(7 downto 0);
 	type row_cache_array_type is array (integer range <>) of row_cache_type;
 	signal row_cache: row_cache_array_type(num_cache_rows - 1 downto 0);
-	signal prefetch_row_index: unsigned(frame_height'range);
+	type prefetch_row_index_type is array (num_cache_rows - 1 downto 0) of unsigned(frame_height'range);
+	signal prefetch_row_index: prefetch_row_index_type;
 	
 	type memory_burst_read_state_enum is (memory_burst_read_state_idle, memory_burst_read_state_initiate, memory_burst_read_state_collect);
 	signal memory_burst_read_state: memory_burst_read_state_enum;
@@ -113,6 +114,8 @@ begin
 		variable symbol_index: unsigned(31 downto 0);
 		variable current_column: unsigned(frame_width'range);
 		variable current_row: unsigned(frame_height'range);
+		variable next_row: unsigned(frame_height'range);
+		variable row_increment: integer range -1 to 1;
 	begin
 		if to_X01(safe_reset) = '1' then
 			packet_send_state <= packet_send_state_idle;
@@ -127,8 +130,10 @@ begin
 			symbol_index := (others => '0');
 			current_column := (others => '0');
 			current_row := (others => '0');
+			next_row := (others => '0');
 			request_prefetch <= (others => '0');
-			prefetch_row_index <= (others => '0');
+			prefetch_row_index <= (others => (others => '0'));
+			row_increment := 1;
 		elsif rising_edge(clock) then
 
 			if packet_send_state = packet_send_state_idle then
@@ -140,11 +145,12 @@ begin
 				symbol_index_base <= (others => '0');
 				current_column := (others => '0');
 				current_row := (others => '0');
+				next_row := current_row + row_increment;
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
 				if ready_to_send_frame then
-					prefetch_row_index <= current_row;
-					request_prefetch <= (others => '1');
+					prefetch_row_index(to_integer(current_row(num_cache_rows downto 0))) <= current_row;
+					request_prefetch(to_integer(current_row(num_cache_rows downto 0))) <= '1';
 					packet_send_state <= packet_send_state_command;
 				end if;
 			else
@@ -210,18 +216,21 @@ begin
 							video_out_data(2 * bits_per_color - 1 downto bits_per_color) <= 
 								std_logic_vector(current_row(bits_per_color - 1 downto 0)); -- green according to row
 
+							-- prefetch next row
+							next_row := current_row + row_increment;
+							if to_integer(current_column) = 0 then -- FIXME: will break when we support horizontal flip
+								prefetch_row_index(to_integer(next_row(num_cache_rows downto 0))) <= next_row;
+								request_prefetch(to_integer(next_row(num_cache_rows downto 0))) <= '1';
+							end if;
 							-- increment column/row
 							current_column := current_column + 1;
 							if current_column >= frame_width then
 								current_column := (others => '0');
-								current_row := current_row + 1;
+								current_row := next_row;
 								if current_row >= frame_height then
 									current_row := (others => '0');
 									video_out_endofpacket <= '1';
 									packet_send_state <= packet_send_state_idle;
-								else
-									prefetch_row_index <= current_row;
-									request_prefetch(to_integer(current_row(num_cache_rows - 1 downto 0))) <= '1'; 
 								end if;
 							end if;
 						end if;
@@ -230,6 +239,13 @@ begin
 						video_out_valid <= '0';
 					end if;
 				end if;
+				
+				--clear request_prefetch
+				for i in 0 to num_cache_rows - 1 loop
+					if request_prefetch(i) = '1' and prefetch_complete(i) = '1' then
+						request_prefetch(i) <= '0';
+					end if;
+				end loop;
 			end if;
 		end if;
 	end process;
@@ -271,7 +287,7 @@ begin
 				elsif memory_burst_read_state = memory_burst_read_state_initiate then
 					if to_integer(buffer_base_address) /= 0 then
 						-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
-						memory_address <= std_logic_vector(buffer_base_address + prefetch_row_index * frame_width * memory_bytes_per_pixel_per_plane + num_bytes_read);
+						memory_address <= std_logic_vector(buffer_base_address + prefetch_row_index(current_prefetch_index) * frame_width * memory_bytes_per_pixel_per_plane + num_bytes_read);
 						num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
 						memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
 						memory_read <= '1';
