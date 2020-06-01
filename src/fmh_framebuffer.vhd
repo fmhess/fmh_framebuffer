@@ -1,6 +1,10 @@
 -- Author: Frank Mori Hess fmh6jj@gmail.com
 -- Copyright 2020 Fluke Corporation
 
+-- TODO
+-- implement colors_per_pixel_per_plane and support colors_per_beat < colors_per_pixel_per_plane
+-- irq
+
 library IEEE;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -11,8 +15,9 @@ entity fmh_framebuffer is
 		colors_per_pixel_per_plane: positive := 4;
 		colors_per_beat: positive := 4;
 		num_color_planes: positive := 1;
+		memory_bytes_per_pixel_per_plane: positive := 4;
 		memory_address_width: positive := 32;
-		memory_burstcount_width: positive := 4;
+		memory_burstcount_width: positive := 5;
 		memory_data_width: positive := 64;
 		slave_address_width: positive := 5;
 		slave_data_width: positive := 32
@@ -51,12 +56,32 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal safe_reset: std_logic;
 	type packet_send_state_enum is (packet_send_state_idle, packet_send_state_command, packet_send_state_video);
 	signal packet_send_state: packet_send_state_enum;
+	constant max_frame_dimension_length: positive := 16#1fff#;
+	-- avalon max burstcount is biggest power of 2 that can fit into burstcount_width (so 16 for a 5 bit wide burstcount)
+	constant max_burstcount: positive := to_integer(shift_left(to_unsigned(1, memory_burstcount_width), memory_burstcount_width - 1));
 	signal frame_width: unsigned(15 downto 0);
 	signal frame_height: unsigned(15 downto 0);
 	signal beat_index: unsigned(31 downto 0);
 	signal symbol_index_base: unsigned(31 downto 0);
 	constant interlacing: std_logic_vector(3 downto 0) := "0010"; -- progressive
+	signal buffer_base_address: unsigned(memory_address_width - 1 downto 0);
+	
+	-- buffer row cache stuff
+	constant num_cache_rows : positive := 2;
+	signal request_prefetch: std_logic_vector(num_cache_rows - 1 downto 0);
+	signal prefetch_complete: std_logic_vector(num_cache_rows - 1 downto 0);
+	type row_cache_type is array (max_frame_dimension_length * memory_bytes_per_pixel_per_plane - 1 downto 0) of std_logic_vector(7 downto 0);
+	type row_cache_array_type is array (integer range <>) of row_cache_type;
+	signal row_cache: row_cache_array_type(num_cache_rows - 1 downto 0);
+	signal prefetch_row_index: unsigned(max_frame_dimension_length - 1 downto 0);
+	
+	type memory_burst_read_state_enum is (memory_burst_read_state_idle, memory_burst_read_state_initiate, memory_burst_read_state_collect);
+	signal memory_burst_read_state: memory_burst_read_state_enum;
+	
 begin
+	
+	assert num_color_planes = 1 report "Only num_color_planes=1 is currently supported.";
+	
 	-- sync release of reset
 	process (reset, clock)
 	begin
@@ -89,6 +114,8 @@ begin
 			symbol_index := (others => '0');
 			current_column := (others => '0');
 			current_row := (others => '0');
+			request_prefetch <= (others => '0');
+			prefetch_row_index <= (others => '0');
 		elsif rising_edge(clock) then
 
 			if packet_send_state = packet_send_state_idle then
@@ -186,10 +213,71 @@ begin
 		end if;
 	end process;
 	
+	-- read buffer memory
+	process(safe_reset, clock)
+		constant memory_data_width_in_bytes: positive := memory_data_width / 8;
+		variable num_reads_remaining_in_burst: unsigned(memory_burstcount_width - 1 downto 0);
+		variable num_bytes_read: integer range 0 to 
+			max_frame_dimension_length * memory_bytes_per_pixel_per_plane; 
+	begin
+		if to_X01(safe_reset) = '1' then
+			memory_address <= (others => '0');
+			memory_burstcount <= (others => '0');
+			memory_read <= '0';
+			prefetch_complete <= (others => '0');
+			row_cache <= (others => (others => (others => '0')));
+			memory_burst_read_state <= memory_burst_read_state_idle;
+			num_reads_remaining_in_burst := (others => '0');
+			num_bytes_read := 0;
+		elsif rising_edge(clock) then
+			for i in 0 to num_cache_rows - 1 loop
+				if request_prefetch(i) = '1' then
+					if memory_burst_read_state = memory_burst_read_state_idle then
+						num_bytes_read := 0;
+						memory_burst_read_state <= memory_burst_read_state_initiate;
+					elsif memory_burst_read_state = memory_burst_read_state_initiate then
+						if to_integer(buffer_base_address) /= 0 then
+							-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
+							memory_address <= std_logic_vector(buffer_base_address + prefetch_row_index * frame_width * memory_bytes_per_pixel_per_plane + num_bytes_read);
+							num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
+							memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
+							memory_read <= '1';
+							memory_burst_read_state <= memory_burst_read_state_collect;
+						end if;
+					elsif memory_burst_read_state = memory_burst_read_state_collect then
+						if to_X01(memory_readdatavalid) = '1' then
+							for i in 0 to memory_data_width_in_bytes loop
+								if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then
+									row_cache(i)(num_bytes_read) <= memory_readdata(8 * i + 7 downto 8 * i);
+									num_bytes_read := num_bytes_read + 1;
+								end if;
+							end loop;
+							num_reads_remaining_in_burst := num_reads_remaining_in_burst - 1;
+							if to_integer(num_reads_remaining_in_burst) = 0 then
+								memory_read <= '0';
+								if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then
+									memory_burst_read_state <= memory_burst_read_state_initiate;
+								else
+									memory_burst_read_state <= memory_burst_read_state_idle;
+								end if;
+							end if;
+						end if;
+					end if;
+				end if;
+			end loop;
+		end if;
+	end process;
+
+	-- slave io port
+	process(safe_reset, clock)
+	begin
+		if to_X01(safe_reset) = '1' then
+			slave_readdata <= (others => '0');
+			buffer_base_address <= (others => '0');
+		elsif rising_edge(clock) then
+		end if;
+	end process;
+	
 	-- unimplemented stubs
-	memory_address <= (others => '0');
-	memory_burstcount <= (others => '0');
-	memory_read <= '0';
-	slave_readdata <= (others => '0');
 	slave_irq <= '0';
 end fmh_framebuffer_arch;
