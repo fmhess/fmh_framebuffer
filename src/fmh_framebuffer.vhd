@@ -4,6 +4,7 @@
 -- TODO
 -- implement colors_per_pixel_per_plane and support colors_per_beat < colors_per_pixel_per_plane
 -- irq
+-- max_frame_width generic param
 
 library IEEE;
 use ieee.std_logic_1164.all;
@@ -56,7 +57,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal safe_reset: std_logic;
 	type packet_send_state_enum is (packet_send_state_idle, packet_send_state_command, packet_send_state_video);
 	signal packet_send_state: packet_send_state_enum;
-	constant max_frame_dimension_length: positive := 16#1000#;
+	constant max_frame_width: positive := 16#1000#;
 	-- avalon max burstcount is biggest power of 2 that can fit into burstcount_width (so 16 for a 5 bit wide burstcount)
 	constant max_burstcount: positive := to_integer(shift_left(to_unsigned(1, memory_burstcount_width), memory_burstcount_width - 1));
 	signal frame_width: unsigned(15 downto 0);
@@ -72,10 +73,10 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	constant num_cache_rows : positive := 2;
 	signal request_prefetch: std_logic_vector(num_cache_rows - 1 downto 0);
 	signal prefetch_complete: std_logic_vector(num_cache_rows - 1 downto 0);
-	type row_cache_type is array (max_frame_dimension_length * memory_bytes_per_pixel_per_plane - 1 downto 0) of std_logic_vector(7 downto 0);
+	type row_cache_type is array (max_frame_width * memory_bytes_per_pixel_per_plane - 1 downto 0) of std_logic_vector(7 downto 0);
 	type row_cache_array_type is array (integer range <>) of row_cache_type;
 	signal row_cache: row_cache_array_type(num_cache_rows - 1 downto 0);
-	signal prefetch_row_index: unsigned(max_frame_dimension_length - 1 downto 0);
+	signal prefetch_row_index: unsigned(frame_height'range);
 	
 	type memory_burst_read_state_enum is (memory_burst_read_state_idle, memory_burst_read_state_initiate, memory_burst_read_state_collect);
 	signal memory_burst_read_state: memory_burst_read_state_enum;
@@ -100,7 +101,9 @@ begin
 		to_X01(video_out_ready) = '1' and
 		to_integer(buffer_base_address) /= 0 and
 		to_integer(requested_frame_width) /= 0 and
-		to_integer(requested_frame_height) /= 0;
+		to_integer(requested_frame_height) /= 0 and
+		unsigned(request_prefetch) = 0 and
+		unsigned(prefetch_complete) = 0;
 	
 	-- generate videout out stream
 	process(safe_reset, clock)
@@ -108,8 +111,8 @@ begin
 		constant first_height_symbol_index: positive := colors_per_beat + 4;
 		constant interlacing_symbol_index: positive := colors_per_beat + 8;
 		variable symbol_index: unsigned(31 downto 0);
-		variable current_column: unsigned(15 downto 0);
-		variable current_row: unsigned(15 downto 0);
+		variable current_column: unsigned(frame_width'range);
+		variable current_row: unsigned(frame_height'range);
 	begin
 		if to_X01(safe_reset) = '1' then
 			packet_send_state <= packet_send_state_idle;
@@ -140,6 +143,8 @@ begin
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
 				if ready_to_send_frame then
+					prefetch_row_index <= current_row;
+					request_prefetch <= (others => '1');
 					packet_send_state <= packet_send_state_command;
 				end if;
 			else
@@ -184,7 +189,10 @@ begin
 					end if;
 
 				elsif packet_send_state = packet_send_state_video then
-					if to_X01(video_out_ready) = '1' then
+					if to_X01(video_out_ready) = '1' and
+						request_prefetch(to_integer(current_row(num_cache_rows - 1 downto 0))) = '0' and
+						prefetch_complete(to_integer(current_row(num_cache_rows - 1 downto 0))) = '0'
+					then
 						beat_index <= beat_index + 1;
 						symbol_index_base <= symbol_index_base + colors_per_beat;
 						video_out_valid <= '1'; -- FIXME: take into account availablity of framebuffer data
@@ -211,6 +219,9 @@ begin
 									current_row := (others => '0');
 									video_out_endofpacket <= '1';
 									packet_send_state <= packet_send_state_idle;
+								else
+									prefetch_row_index <= current_row;
+									request_prefetch(to_integer(current_row(num_cache_rows - 1 downto 0))) <= '1'; 
 								end if;
 							end if;
 						end if;
@@ -228,7 +239,8 @@ begin
 		constant memory_data_width_in_bytes: positive := memory_data_width / 8;
 		variable num_reads_remaining_in_burst: unsigned(memory_burstcount_width - 1 downto 0);
 		variable num_bytes_read: integer range 0 to 
-			max_frame_dimension_length * memory_bytes_per_pixel_per_plane; 
+			max_frame_width * memory_bytes_per_pixel_per_plane; 
+		variable current_prefetch_index: integer range -1 to num_cache_rows - 1;
 	begin
 		if to_X01(safe_reset) = '1' then
 			memory_address <= (others => '0');
@@ -239,42 +251,55 @@ begin
 			memory_burst_read_state <= memory_burst_read_state_idle;
 			num_reads_remaining_in_burst := (others => '0');
 			num_bytes_read := 0;
+			current_prefetch_index := -1;
 		elsif rising_edge(clock) then
 			for i in 0 to num_cache_rows - 1 loop
-				if request_prefetch(i) = '1' then
-					if memory_burst_read_state = memory_burst_read_state_idle then
-						num_bytes_read := 0;
-						memory_burst_read_state <= memory_burst_read_state_initiate;
-					elsif memory_burst_read_state = memory_burst_read_state_initiate then
-						if to_integer(buffer_base_address) /= 0 then
-							-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
-							memory_address <= std_logic_vector(buffer_base_address + prefetch_row_index * frame_width * memory_bytes_per_pixel_per_plane + num_bytes_read);
-							num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
-							memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
-							memory_read <= '1';
-							memory_burst_read_state <= memory_burst_read_state_collect;
-						end if;
-					elsif memory_burst_read_state = memory_burst_read_state_collect then
-						if to_X01(memory_readdatavalid) = '1' then
-							for i in 0 to memory_data_width_in_bytes loop
-								if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then
-									row_cache(i)(num_bytes_read) <= memory_readdata(8 * i + 7 downto 8 * i);
-									num_bytes_read := num_bytes_read + 1;
-								end if;
-							end loop;
-							num_reads_remaining_in_burst := num_reads_remaining_in_burst - 1;
-							if to_integer(num_reads_remaining_in_burst) = 0 then
-								memory_read <= '0';
-								if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then
-									memory_burst_read_state <= memory_burst_read_state_initiate;
-								else
-									memory_burst_read_state <= memory_burst_read_state_idle;
-								end if;
+				if request_prefetch(i) = '1' and current_prefetch_index < 0 then
+					current_prefetch_index := i;
+				end if;
+				
+				-- clear prefetch_complete as needed
+				if prefetch_complete(i) = '1' and request_prefetch(i) = '0' then
+					prefetch_complete(i) <= '0';
+				end if;
+			end loop;
+			
+			if current_prefetch_index >= 0 then
+				if memory_burst_read_state = memory_burst_read_state_idle then
+					num_bytes_read := 0;
+					memory_burst_read_state <= memory_burst_read_state_initiate;
+				elsif memory_burst_read_state = memory_burst_read_state_initiate then
+					if to_integer(buffer_base_address) /= 0 then
+						-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
+						memory_address <= std_logic_vector(buffer_base_address + prefetch_row_index * frame_width * memory_bytes_per_pixel_per_plane + num_bytes_read);
+						num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
+						memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
+						memory_read <= '1';
+						memory_burst_read_state <= memory_burst_read_state_collect;
+					end if;
+				elsif memory_burst_read_state = memory_burst_read_state_collect then
+					if to_X01(memory_readdatavalid) = '1' then
+						for i in 0 to memory_data_width_in_bytes loop
+							if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then
+								row_cache(current_prefetch_index)(num_bytes_read) <= memory_readdata(8 * i + 7 downto 8 * i);
+								num_bytes_read := num_bytes_read + 1;
+							end if;
+						end loop;
+						num_reads_remaining_in_burst := num_reads_remaining_in_burst - 1;
+						if to_integer(num_reads_remaining_in_burst) = 0 then
+							memory_read <= '0';
+							if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then
+								memory_burst_read_state <= memory_burst_read_state_initiate;
+							else
+								prefetch_complete(current_prefetch_index) <= '1';
+								current_prefetch_index := -1;
+								memory_burst_read_state <= memory_burst_read_state_idle;
 							end if;
 						end if;
 					end if;
 				end if;
-			end loop;
+			end if;
+			
 		end if;
 	end process;
 
