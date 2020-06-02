@@ -1,7 +1,8 @@
 .PHONY: all
-all: fmh_framebuffer_testbench.fst \
+all: fmh_framebuffer_testbench.fst
 
 FMH_FRAMEBUFFER_TEST_SRC = \
+	../src/fmh_framebuffer_ocram.vhd \
 	../src/fmh_framebuffer.vhd \
 	fmh_framebuffer_testbench.vhd
 fmh_framebuffer_testbench.fst: $(FMH_FRAMEBUFFER_TEST_SRC)

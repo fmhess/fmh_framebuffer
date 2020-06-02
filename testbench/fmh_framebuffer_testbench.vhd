@@ -174,8 +174,8 @@ architecture behav of fmh_framebuffer_testbench is
 		reset <= '0';
 		wait until rising_edge(clock);
 
-		host_write(8, X"00000100"); -- frame width
-		host_write(9, X"00000080"); -- frame height
+		host_write(8, X"00000028"); -- frame width
+		host_write(9, X"0000000a"); -- frame height
 		host_write(4, X"70000000"); -- base address FIXME sim failure for base address 80000000
 		host_write(0, X"00000003"); -- go and enable irq
 
