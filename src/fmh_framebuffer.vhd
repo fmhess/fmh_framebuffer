@@ -3,7 +3,7 @@
 
 -- TODO
 -- implement colors_per_pixel_per_plane and support colors_per_beat < colors_per_pixel_per_plane
--- irq
+
 
 library IEEE;
 use ieee.std_logic_1164.all;
@@ -347,9 +347,10 @@ begin
 
 				elsif memory_burst_read_state = memory_burst_read_state_initiate then
 
-					if to_integer(buffer_base_address) /= 0 then
+					if buffer_base_address /= 0 then
 						-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
 						memory_address <= std_logic_vector(buffer_base_address + prefetch_address(current_prefetch_index) * memory_data_width_in_bytes + num_bytes_read);
+--						memory_address <= std_logic_vector(buffer_base_address - 1);
 						num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
 						memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
 						memory_read <= '1';
