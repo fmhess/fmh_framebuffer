@@ -4,7 +4,6 @@
 -- TODO
 -- implement colors_per_pixel_per_plane and support colors_per_beat < colors_per_pixel_per_plane
 -- irq
--- max_frame_width generic param
 
 library IEEE;
 use ieee.std_logic_1164.all;
@@ -20,8 +19,9 @@ entity fmh_framebuffer is
 		memory_address_width: positive := 32;
 		memory_burstcount_width: positive := 5;
 		memory_data_width: positive := 64;
-		slave_address_width: positive := 5;
-		slave_data_width: positive := 32
+		max_frame_width: positive := 16#1000#;
+		default_horizontal_flip: boolean := false;
+		default_vertical_flip: boolean := false
 	);
 	port(
 		clock: in std_logic;
@@ -36,10 +36,10 @@ entity fmh_framebuffer is
 		memory_waitrequest: in std_logic;
 		
 		-- avalon slave
-		slave_address: in std_logic_vector(slave_address_width - 1 downto 0);
-		slave_readdata: out std_logic_vector(slave_data_width - 1 downto 0);
+		slave_address: in std_logic_vector(4 downto 0);
+		slave_readdata: out std_logic_vector(31 downto 0);
 		slave_read: in std_logic;
-		slave_writedata: in std_logic_vector(slave_data_width - 1 downto 0);
+		slave_writedata: in std_logic_vector(31 downto 0);
 		slave_write: in std_logic;
 		slave_irq: out std_logic;
 		
@@ -57,7 +57,6 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal safe_reset: std_logic;
 	type packet_send_state_enum is (packet_send_state_idle, packet_send_state_command, packet_send_state_video);
 	signal packet_send_state: packet_send_state_enum;
-	constant max_frame_width: positive := 16#1000#;
 	-- avalon max burstcount is biggest power of 2 that can fit into burstcount_width (so 16 for a 5 bit wide burstcount)
 	constant max_burstcount: positive := to_integer(shift_left(to_unsigned(1, memory_burstcount_width), memory_burstcount_width - 1));
 	signal frame_width: unsigned(15 downto 0);
@@ -145,6 +144,7 @@ begin
 				symbol_index_base <= (others => '0');
 				current_column := (others => '0');
 				current_row := (others => '0');
+				row_increment := 1;
 				next_row := current_row + row_increment;
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
@@ -288,7 +288,7 @@ begin
 				elsif memory_burst_read_state = memory_burst_read_state_initiate then
 					if to_integer(buffer_base_address) /= 0 then
 						-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
-						memory_address <= std_logic_vector(buffer_base_address + prefetch_row_index(current_prefetch_index) * frame_width * memory_bytes_per_pixel_per_plane + num_bytes_read);
+						memory_address <= std_logic_vector(buffer_base_address + to_integer(prefetch_row_index(current_prefetch_index) * frame_width) * memory_bytes_per_pixel_per_plane + num_bytes_read);
 						num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
 						memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
 						memory_read <= '1';
@@ -296,7 +296,7 @@ begin
 					end if;
 				elsif memory_burst_read_state = memory_burst_read_state_collect then
 					if to_X01(memory_readdatavalid) = '1' then
-						for i in 0 to memory_data_width_in_bytes loop
+						for i in 0 to memory_data_width_in_bytes - 1 loop
 							if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then
 								row_cache(current_prefetch_index)(num_bytes_read) <= memory_readdata(8 * i + 7 downto 8 * i);
 								num_bytes_read := num_bytes_read + 1;
@@ -326,12 +326,14 @@ begin
 		if to_X01(safe_reset) = '1' then
 			slave_readdata <= (others => '0');
 		elsif rising_edge(clock) then
+			slave_readdata <= (others => '0');
 		end if;
 	end process;
 	
 	-- slave io port writes
 	process(safe_reset, clock)
 		variable prev_slave_write: std_logic;
+		variable temp_frame_width: unsigned(requested_frame_width'length - 1 downto 0);
 	begin
 		if to_X01(safe_reset) = '1' then
 			buffer_base_address <= (others => '0');
@@ -347,7 +349,10 @@ begin
 				when 16#4# =>
 					buffer_base_address <= unsigned(to_X01(slave_writedata));
 				when 16#8# =>
-					requested_frame_width <= unsigned(to_X01(slave_writedata(requested_frame_width'length - 1 downto 0)));
+					temp_frame_width := unsigned(to_X01(slave_writedata(requested_frame_width'length - 1 downto 0)));
+					if temp_frame_width < max_frame_width then
+						requested_frame_width <= temp_frame_width;
+					end if;
 				when 16#9# =>
 					requested_frame_height <= unsigned(to_X01(slave_writedata(requested_frame_height'length - 1 downto 0)));
 				when others =>
