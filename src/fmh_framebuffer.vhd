@@ -69,7 +69,8 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal buffer_base_address: unsigned(memory_address_width - 1 downto 0);
 	
 	-- buffer row cache stuff
-	constant num_cache_rows : positive := 2;
+	constant log2_num_cache_rows : positive := 1;
+	constant num_cache_rows : positive := 2 ** log2_num_cache_rows;
 	signal request_prefetch: std_logic_vector(num_cache_rows - 1 downto 0);
 	signal prefetch_complete: std_logic_vector(num_cache_rows - 1 downto 0);
 	type row_cache_type is array (max_frame_width * memory_bytes_per_pixel_per_plane - 1 downto 0) of std_logic_vector(7 downto 0);
@@ -83,6 +84,11 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	
 	signal ready_to_send_frame: boolean;
 	signal go: std_logic;
+	
+	-- irq
+	signal slave_irq_enable: std_logic;
+	signal raw_slave_irq: std_logic;
+	signal clear_slave_irq: std_logic; -- pulsed
 begin
 	
 	assert num_color_planes = 1 report "Only num_color_planes=1 is currently supported.";
@@ -99,9 +105,9 @@ begin
  
 	ready_to_send_frame <= go = '1' and 
 		to_X01(video_out_ready) = '1' and
-		to_integer(buffer_base_address) /= 0 and
-		to_integer(requested_frame_width) /= 0 and
-		to_integer(requested_frame_height) /= 0 and
+		buffer_base_address /= 0 and
+		requested_frame_width /= 0 and
+		requested_frame_height /= 0 and
 		unsigned(request_prefetch) = 0 and
 		unsigned(prefetch_complete) = 0;
 	
@@ -133,6 +139,7 @@ begin
 			request_prefetch <= (others => '0');
 			prefetch_row_index <= (others => (others => '0'));
 			row_increment := 1;
+			raw_slave_irq <= '0';
 		elsif rising_edge(clock) then
 
 			if packet_send_state = packet_send_state_idle then
@@ -149,8 +156,8 @@ begin
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
 				if ready_to_send_frame then
-					prefetch_row_index(to_integer(current_row(num_cache_rows - 1 downto 0))) <= current_row;
-					request_prefetch(to_integer(current_row(num_cache_rows - 1 downto 0))) <= '1';
+					prefetch_row_index(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) <= current_row;
+					request_prefetch(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) <= '1';
 					packet_send_state <= packet_send_state_command;
 				end if;
 			else
@@ -196,8 +203,8 @@ begin
 
 				elsif packet_send_state = packet_send_state_video then
 					if to_X01(video_out_ready) = '1' and
-						request_prefetch(to_integer(current_row(num_cache_rows - 1 downto 0))) = '0' and
-						prefetch_complete(to_integer(current_row(num_cache_rows - 1 downto 0))) = '0'
+						request_prefetch(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) = '0' and
+						prefetch_complete(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) = '0'
 					then
 						beat_index <= beat_index + 1;
 						symbol_index_base <= symbol_index_base + colors_per_beat;
@@ -214,14 +221,14 @@ begin
 							
 							for i in 0 to (colors_per_pixel_per_plane * bits_per_color) - 1 loop
 								video_out_data(i) <= 
-									row_cache(to_integer(current_row(num_cache_rows - 1 downto 0)))(to_integer(frame_width * current_row + current_column) * memory_bytes_per_pixel_per_plane + i / 8)(i mod 8);
+									row_cache(to_integer(current_row(log2_num_cache_rows - 1 downto 0)))(to_integer(current_column) * memory_bytes_per_pixel_per_plane + i / 8)(i mod 8);
 							end loop;
 							
 							-- prefetch next row
 							next_row := current_row + row_increment;
 							if to_integer(current_column) = 0 then -- FIXME: will break when we support horizontal flip
-								prefetch_row_index(to_integer(next_row(num_cache_rows downto 0))) <= next_row;
-								request_prefetch(to_integer(next_row(num_cache_rows - 1 downto 0))) <= '1';
+								prefetch_row_index(to_integer(next_row(log2_num_cache_rows - 1 downto 0))) <= next_row;
+								request_prefetch(to_integer(next_row(log2_num_cache_rows - 1 downto 0))) <= '1';
 							end if;
 							-- increment column/row
 							current_column := current_column + 1;
@@ -231,6 +238,7 @@ begin
 								if current_row >= frame_height then
 									current_row := (others => '0');
 									video_out_endofpacket <= '1';
+									raw_slave_irq <= '1';
 									packet_send_state <= packet_send_state_idle;
 								end if;
 							end if;
@@ -241,12 +249,16 @@ begin
 					end if;
 				end if;
 				
-				--clear request_prefetch
+				-- clear request_prefetch
 				for i in 0 to num_cache_rows - 1 loop
 					if request_prefetch(i) = '1' and prefetch_complete(i) = '1' then
 						request_prefetch(i) <= '0';
 					end if;
 				end loop;
+			end if;
+			-- clear irq
+			if clear_slave_irq = '1' then
+				raw_slave_irq <= '0';
 			end if;
 		end if;
 	end process;
@@ -341,11 +353,20 @@ begin
 			requested_frame_width <= (others => '0');
 			requested_frame_height <= (others => '0');
 			go <= '0';
+			slave_irq_enable <= '0';
+			clear_slave_irq <= '0';
 		elsif rising_edge(clock) then
+			clear_slave_irq <= '0';
+			
 			if prev_slave_write = '0' and to_X01(slave_write) = '1' then
 				case to_integer(unsigned(slave_address)) is
 				when 16#0# =>
 					go <= to_X01(slave_writedata(0));
+					slave_irq_enable <= to_X01(slave_writedata(1));
+				when 16#2# =>
+					if to_X01(slave_writedata(0)) = '1' then
+						clear_slave_irq <= '1';
+					end if;
 				when 16#4# =>
 					buffer_base_address <= unsigned(to_X01(slave_writedata));
 				when 16#8# =>
@@ -363,6 +384,5 @@ begin
 		end if;
 	end process;
 
-	-- unimplemented stubs
-	slave_irq <= '0';
+	slave_irq <= raw_slave_irq and slave_irq_enable;
 end fmh_framebuffer_arch;
