@@ -120,7 +120,7 @@ begin
 		variable current_column: unsigned(frame_width'range);
 		variable current_row: unsigned(frame_height'range);
 		variable next_row: unsigned(frame_height'range);
-		variable row_increment: integer range -1 to 1;
+		variable row_increment: integer range -1 to 1 := 1;
 	begin
 		if to_X01(safe_reset) = '1' then
 			packet_send_state <= packet_send_state_idle;
