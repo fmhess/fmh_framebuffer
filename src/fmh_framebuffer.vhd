@@ -21,10 +21,11 @@ entity fmh_framebuffer is
 		memory_bytes_per_pixel_per_plane: positive := 4;
 		memory_address_width: positive := 32;
 		memory_burstcount_width: positive := 5;
-		memory_data_width: positive := 128;
+		memory_data_width: positive := 64;
 		max_frame_width: positive := 16#1000#;
 		default_horizontal_flip: boolean := false;
-		default_vertical_flip: boolean := false
+		default_vertical_flip: boolean := false;
+		avalon_st_first_symbol_in_high_order_bits: boolean := true -- unimplemented
 	);
 	port(
 		clock: in std_logic;
@@ -58,7 +59,7 @@ end fmh_framebuffer;
 architecture fmh_framebuffer_arch of fmh_framebuffer is
 
 	signal safe_reset: std_logic;
-	type packet_send_state_enum is (packet_send_state_idle, packet_send_state_command, packet_send_state_video);
+	type packet_send_state_enum is (packet_send_state_idle, packet_send_state_command, packet_send_state_video, packet_send_state_delay);
 	signal packet_send_state: packet_send_state_enum;
 	-- avalon max burstcount is biggest power of 2 that can fit into burstcount_width (so 16 for a 5 bit wide burstcount)
 	constant max_burstcount: positive := to_integer(shift_left(to_unsigned(1, memory_burstcount_width), memory_burstcount_width - 1));
@@ -177,6 +178,8 @@ begin
 			symbol_index := (others => '0');
 			current_column := (others => '0');
 			current_row := (others => '0');
+			start_column := (others => '0');
+			start_row := (others => '0');
 			next_row := (others => '0');
 			request_prefetch <= (others => '0');
 			prefetch_address <= (others => (others => '0'));
@@ -242,15 +245,45 @@ begin
 
 								if symbol_index >= first_width_symbol_index and
 									symbol_index < first_height_symbol_index then
-									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
-										std_logic_vector(frame_width(15 - (to_integer(symbol_index) - first_width_symbol_index) * 4 
-											downto 12 - (to_integer(symbol_index) - first_width_symbol_index) * 4));
+-- 									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+-- 										std_logic_vector(frame_width(15 - (to_integer(symbol_index) - first_width_symbol_index) * 4 
+-- 											downto 12 - (to_integer(symbol_index) - first_width_symbol_index) * 4));
+									case to_integer(symbol_index) - first_width_symbol_index is
+									when 0 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_width(3 downto 0));
+									when 1 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_width(7 downto 4));
+									when 2 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_width(11 downto 8));
+									when 3 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_width(15 downto 12));
+									when others =>
+									end case;
 								elsif symbol_index >= first_height_symbol_index and
 									symbol_index < interlacing_symbol_index then
-									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
-										std_logic_vector(frame_height(15 - (to_integer(symbol_index) - first_height_symbol_index) * 4 
-											downto 12 - (to_integer(symbol_index) - first_height_symbol_index) * 4));
-								elsif symbol_index = interlacing_symbol_index then
+-- 									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+-- 										std_logic_vector(frame_height(15 - (to_integer(symbol_index) - first_height_symbol_index) * 4 
+-- 											downto 12 - (to_integer(symbol_index) - first_height_symbol_index) * 4));
+									case to_integer(symbol_index) - first_height_symbol_index is
+									when 0 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_height(3 downto 0));
+									when 1 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_height(7 downto 4));
+									when 2 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_height(11 downto 8));
+									when 3 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_height(15 downto 12));
+									when others =>
+									end case;
+								elsif symbol_index = interlacing_symbol_index or symbol_index = interlacing_symbol_index + 3 then
 									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= interlacing;
 									video_out_endofpacket <= '1';
 									beat_index <= (others => '0');
@@ -288,8 +321,8 @@ begin
 							
 							-- prefetch next row
 							next_row := current_row + row_increment;
-							if (horizontal_flip = '0' and current_column = 0) or
-								(horizontal_flip = '1' and current_column = frame_width - 1)
+							if (current_column = start_column) and
+								(next_row < frame_height)
 							then
 								prefetch_address(to_integer(next_row(log2_num_cache_rows - 1 downto 0))) <= 
 									calculate_cache_address(next_row, to_unsigned(0, current_column'length), frame_width);
@@ -304,7 +337,7 @@ begin
 									current_row := start_row;
 									video_out_endofpacket <= '1';
 									raw_slave_irq <= '1';
-									packet_send_state <= packet_send_state_idle;
+									packet_send_state <= packet_send_state_delay;
 								end if;
 							end if;
 							cache_read_address <= calculate_cache_address(current_row, current_column, frame_width);
@@ -313,6 +346,14 @@ begin
 					else
 						video_out_valid <= '0';
 					end if;
+				
+				-- delay state to give a chance for the receiver to deassert ready after receiving the end of the video packet
+				elsif packet_send_state = packet_send_state_delay then
+					video_out_valid <= '0';
+					video_out_data <= (others => '0');
+					video_out_startofpacket <= '0';
+					video_out_endofpacket <= '0';
+					packet_send_state <= packet_send_state_idle;
 				end if;
 				
 				-- clear request_prefetch
