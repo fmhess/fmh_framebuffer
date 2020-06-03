@@ -59,7 +59,7 @@ end fmh_framebuffer;
 architecture fmh_framebuffer_arch of fmh_framebuffer is
 
 	signal safe_reset: std_logic;
-	type packet_send_state_enum is (packet_send_state_idle, packet_send_state_command, packet_send_state_video, packet_send_state_delay);
+	type packet_send_state_enum is (packet_send_state_idle, packet_send_state_command, packet_send_state_wait_for_prefetch, packet_send_state_video);
 	signal packet_send_state: packet_send_state_enum;
 	-- avalon max burstcount is biggest power of 2 that can fit into burstcount_width (so 16 for a 5 bit wide burstcount)
 	constant max_burstcount: positive := to_integer(shift_left(to_unsigned(1, memory_burstcount_width), memory_burstcount_width - 1));
@@ -74,14 +74,14 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal buffer_base_address: unsigned(memory_address_width - 1 downto 0);
 	
 	-- buffer row cache stuff
+	constant log2_memory_data_width_in_bytes: positive := integer(log2(real(memory_data_width / 8)));
 	constant log2_num_cache_rows : positive := 1;
 	constant num_cache_rows : positive := 2 ** log2_num_cache_rows;
-	signal request_prefetch: std_logic_vector(num_cache_rows - 1 downto 0);
-	signal prefetch_complete: std_logic_vector(num_cache_rows - 1 downto 0);
+	signal request_prefetch: std_logic;
+	signal prefetch_complete: std_logic;
 	constant cache_address_width: natural := integer(ceil(log2(real(max_frame_width * memory_bytes_per_pixel_per_plane / memory_data_width_in_bytes + 1)))) + 
 		log2_num_cache_rows;
-	type prefetch_address_type is array (num_cache_rows - 1 downto 0) of unsigned(cache_address_width - 1 downto 0);
-	signal prefetch_address: prefetch_address_type;
+	signal prefetch_address: unsigned(memory_address_width - 1 downto log2_memory_data_width_in_bytes);
 	signal cache_write_address: unsigned(cache_address_width - 1 downto 0);
 	signal cache_write_enable: std_logic;
 	signal cache_write_data: std_logic_vector(memory_data_width - 1 downto 0);
@@ -100,6 +100,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal slave_irq_enable: std_logic;
 	signal raw_slave_irq: std_logic;
 	signal clear_slave_irq: std_logic; -- pulsed
+	
 begin
 	
 	assert num_color_planes = 1 report "Only num_color_planes=1 is currently supported.";
@@ -133,8 +134,8 @@ begin
 		buffer_base_address /= 0 and
 		requested_frame_width /= 0 and
 		requested_frame_height /= 0 and
-		unsigned(request_prefetch) = 0 and
-		unsigned(prefetch_complete) = 0;
+		request_prefetch = '0' and
+		prefetch_complete = '0';
 	
 	-- generate videout out stream
 	process(safe_reset, clock)	
@@ -150,19 +151,23 @@ begin
 		variable row_increment: integer range -1 to 1 := 1;
 		variable column_increment: integer range -1 to 1 := 1;
 
+		function calculate_prefetch_address(row: unsigned; column: unsigned; width: unsigned) 
+			return unsigned is
+		begin
+			return resize((row * width + column) * memory_bytes_per_pixel_per_plane / memory_data_width_in_bytes, memory_address_width - log2_memory_data_width_in_bytes);
+		end function calculate_prefetch_address;
+
 		function calculate_cache_address(row: unsigned; column: unsigned; width: unsigned) 
 			return unsigned is
-			variable result: unsigned(cache_address_width - 1 downto 0);
 		begin
-			result := resize((row * width + column) * memory_bytes_per_pixel_per_plane / memory_data_width_in_bytes, cache_address_width);
-			return result;
+			return resize(calculate_prefetch_address(row, column, width), cache_address_width);
 		end function calculate_cache_address;
 		
-		function calculate_cache_data_offset(row: unsigned; column: unsigned; width: unsigned)
+		function calculate_cache_byte_offset(row: unsigned; column: unsigned; width: unsigned)
 			return natural is
 		begin
 			return to_integer((row * width + column) * memory_bytes_per_pixel_per_plane mod memory_data_width_in_bytes);
-		end function calculate_cache_data_offset;
+		end function calculate_cache_byte_offset;
 		
 	begin
 		if to_X01(safe_reset) = '1' then
@@ -181,14 +186,13 @@ begin
 			start_column := (others => '0');
 			start_row := (others => '0');
 			next_row := (others => '0');
-			request_prefetch <= (others => '0');
-			prefetch_address <= (others => (others => '0'));
+			request_prefetch <= '0';
+			prefetch_address <= (others => '0');
 			row_increment := 0;
 			column_increment := 0;
 			raw_slave_irq <= '0';
 			cache_read_address <= (others => '0');
 		elsif rising_edge(clock) then
-
 			if packet_send_state = packet_send_state_idle then
 				video_out_valid <= '0';
 				video_out_data <= (others => '0');
@@ -219,10 +223,10 @@ begin
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
 				if ready_to_send_frame then
-					prefetch_address(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) <= 
-						calculate_cache_address(current_row, to_unsigned(0, current_column'length), frame_width);
+					prefetch_address <= 
+						calculate_prefetch_address(current_row, to_unsigned(0, current_column'length), frame_width);
 					cache_read_address <= calculate_cache_address(current_row, current_column, frame_width);
-					request_prefetch(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) <= '1';
+					request_prefetch <= '1';
 					packet_send_state <= packet_send_state_command;
 				end if;
 			else
@@ -233,7 +237,8 @@ begin
 						video_out_valid <= '1';
 
 						if to_integer(beat_index) = 0 then
-							video_out_data <= (others => '1'); -- least significant nibble must be all 1's for control packet, the rest are don't care
+							video_out_data(colors_per_beat * bits_per_color - 1 downto 4) <= (others => '0');
+							video_out_data(3 downto 0) <= "1111";
 							video_out_startofpacket <= '1';
 							video_out_endofpacket <= '0';
 						else
@@ -245,50 +250,44 @@ begin
 
 								if symbol_index >= first_width_symbol_index and
 									symbol_index < first_height_symbol_index then
--- 									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
--- 										std_logic_vector(frame_width(15 - (to_integer(symbol_index) - first_width_symbol_index) * 4 
--- 											downto 12 - (to_integer(symbol_index) - first_width_symbol_index) * 4));
 									case to_integer(symbol_index) - first_width_symbol_index is
-									when 0 =>
+									when 3 =>
 										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
 											std_logic_vector(frame_width(3 downto 0));
-									when 1 =>
-										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
-											std_logic_vector(frame_width(7 downto 4));
 									when 2 =>
 										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_width(7 downto 4));
+									when 1 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
 											std_logic_vector(frame_width(11 downto 8));
-									when 3 =>
+									when 0 =>
 										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
 											std_logic_vector(frame_width(15 downto 12));
 									when others =>
 									end case;
 								elsif symbol_index >= first_height_symbol_index and
 									symbol_index < interlacing_symbol_index then
--- 									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
--- 										std_logic_vector(frame_height(15 - (to_integer(symbol_index) - first_height_symbol_index) * 4 
--- 											downto 12 - (to_integer(symbol_index) - first_height_symbol_index) * 4));
 									case to_integer(symbol_index) - first_height_symbol_index is
-									when 0 =>
+									when 3 =>
 										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
 											std_logic_vector(frame_height(3 downto 0));
-									when 1 =>
-										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
-											std_logic_vector(frame_height(7 downto 4));
 									when 2 =>
 										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
+											std_logic_vector(frame_height(7 downto 4));
+									when 1 =>
+										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
 											std_logic_vector(frame_height(11 downto 8));
-									when 3 =>
+									when 0 =>
 										video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= 
 											std_logic_vector(frame_height(15 downto 12));
 									when others =>
 									end case;
-								elsif symbol_index = interlacing_symbol_index or symbol_index = interlacing_symbol_index + 3 then
+								elsif symbol_index = interlacing_symbol_index then
 									video_out_data(i * bits_per_color + 3 downto i * bits_per_color) <= interlacing;
 									video_out_endofpacket <= '1';
 									beat_index <= (others => '0');
 									symbol_index_base <= (others => '0');
-									packet_send_state <= packet_send_state_video;
+									packet_send_state <= packet_send_state_wait_for_prefetch;
 								end if;
 							end loop;
 						end if;
@@ -296,13 +295,14 @@ begin
 						video_out_valid <= '0';
 					end if;
 
+				elsif packet_send_state = packet_send_state_wait_for_prefetch then
+					if prefetch_complete = '0' and request_prefetch = '0' then
+						packet_send_state <= packet_send_state_video;
+					end if;
 				elsif packet_send_state = packet_send_state_video then
 					video_out_endofpacket <= '0';
 					
-					if to_X01(video_out_ready) = '1' and
-						request_prefetch(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) = '0' and
-						prefetch_complete(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) = '0'
-					then
+					if to_X01(video_out_ready) = '1' then
 						beat_index <= beat_index + 1;
 						symbol_index_base <= symbol_index_base + colors_per_beat;
 						video_out_valid <= '1'; -- FIXME: take into account availablity of framebuffer data
@@ -316,28 +316,31 @@ begin
 							
 							for i in 0 to (colors_per_pixel_per_plane * bits_per_color) - 1 loop
 								video_out_data(i) <= 
-									cache_read_data(calculate_cache_data_offset(current_row, current_column, frame_width) * 8 + i);
+									cache_read_data(calculate_cache_byte_offset(current_row, current_column, frame_width) * 8 + i);
 							end loop;
 							
 							-- prefetch next row
 							next_row := current_row + row_increment;
-							if (current_column = start_column) and
-								(next_row < frame_height)
-							then
-								prefetch_address(to_integer(next_row(log2_num_cache_rows - 1 downto 0))) <= 
-									calculate_cache_address(next_row, to_unsigned(0, current_column'length), frame_width);
-								request_prefetch(to_integer(next_row(log2_num_cache_rows - 1 downto 0))) <= '1';
+							if next_row >= frame_width then
+								next_row := start_row;
+							end if;
+							if (current_column = start_column and next_row /= start_row) then
+								prefetch_address <= 
+									calculate_prefetch_address(next_row, to_unsigned(0, current_column'length), frame_width);
+								assert request_prefetch = '0';
+								request_prefetch <= '1';
 							end if;
 							-- increment column/row
 							current_column := current_column + column_increment;
 							if current_column >= frame_width then
 								current_column := start_column;
 								current_row := next_row;
-								if current_row >= frame_height then
-									current_row := start_row;
+								if current_row = start_row then
 									video_out_endofpacket <= '1';
 									raw_slave_irq <= '1';
-									packet_send_state <= packet_send_state_delay;
+									packet_send_state <= packet_send_state_idle;
+								else
+									packet_send_state <= packet_send_state_wait_for_prefetch;
 								end if;
 							end if;
 							cache_read_address <= calculate_cache_address(current_row, current_column, frame_width);
@@ -346,22 +349,12 @@ begin
 					else
 						video_out_valid <= '0';
 					end if;
-				
-				-- delay state to give a chance for the receiver to deassert ready after receiving the end of the video packet
-				elsif packet_send_state = packet_send_state_delay then
-					video_out_valid <= '0';
-					video_out_data <= (others => '0');
-					video_out_startofpacket <= '0';
-					video_out_endofpacket <= '0';
-					packet_send_state <= packet_send_state_idle;
 				end if;
+			end if;
 				
-				-- clear request_prefetch
-				for i in 0 to num_cache_rows - 1 loop
-					if request_prefetch(i) = '1' and prefetch_complete(i) = '1' then
-						request_prefetch(i) <= '0';
-					end if;
-				end loop;
+			-- clear request_prefetch
+			if request_prefetch = '1' and prefetch_complete = '1' then
+				request_prefetch <= '0';
 			end if;
 			-- clear irq
 			if clear_slave_irq = '1' then
@@ -375,68 +368,58 @@ begin
 		variable num_reads_remaining_in_burst: unsigned(memory_burstcount_width - 1 downto 0);
 		variable num_bytes_read: integer range 0 to 
 			max_frame_width * memory_bytes_per_pixel_per_plane; 
-		variable current_prefetch_index: integer range -1 to num_cache_rows - 1;
 	begin
 		if to_X01(safe_reset) = '1' then
 			memory_address <= (others => '0');
 			memory_burstcount <= (others => '0');
 			memory_read <= '0';
-			prefetch_complete <= (others => '0');
+			prefetch_complete <= '0';
 			memory_burst_read_state <= memory_burst_read_state_idle;
 			num_reads_remaining_in_burst := (others => '0');
 			num_bytes_read := 0;
-			current_prefetch_index := -1;
 			cache_write_address <= (others => '0');
 			cache_write_enable <= '0';
 			cache_write_data <= (others => '0');
 		elsif rising_edge(clock) then
-			for i in 0 to num_cache_rows - 1 loop
-				if request_prefetch(i) = '1' and prefetch_complete(i) = '0' and current_prefetch_index < 0 then
-					current_prefetch_index := i;
-				end if;
-				
-				-- clear prefetch_complete as needed
-				if prefetch_complete(i) = '1' and request_prefetch(i) = '0' then
-					prefetch_complete(i) <= '0';
-				end if;
-			end loop;
+			-- clear prefetch_complete as needed
+			if prefetch_complete = '1' and request_prefetch = '0' then
+				prefetch_complete <= '0';
+			end if;
 			
 			cache_write_address <= (others => '0');
 			cache_write_enable <= '0';
 			cache_write_data <= (others => '0');
 
-			if current_prefetch_index >= 0 then
-				if memory_burst_read_state = memory_burst_read_state_idle then
-					num_bytes_read := 0;
+			if memory_burst_read_state = memory_burst_read_state_idle then
+				num_bytes_read := 0;
+				if request_prefetch = '1' and prefetch_complete = '0' then
 					memory_burst_read_state <= memory_burst_read_state_initiate;
+				end if;
+			elsif memory_burst_read_state = memory_burst_read_state_initiate then
 
-				elsif memory_burst_read_state = memory_burst_read_state_initiate then
-
-					if buffer_base_address /= 0 then
-						-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
-						memory_address <= std_logic_vector(buffer_base_address + prefetch_address(current_prefetch_index) * memory_data_width_in_bytes + num_bytes_read);
-						num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
-						memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
-						memory_read <= '1';
-						memory_burst_read_state <= memory_burst_read_state_collect;
-					end if;
-					
-				elsif memory_burst_read_state = memory_burst_read_state_collect then
-					if to_X01(memory_readdatavalid) = '1' then
-						cache_write_address <= prefetch_address(current_prefetch_index) + num_bytes_read / memory_data_width_in_bytes;
-						cache_write_enable <= '1';
-						cache_write_data <= memory_readdata;
-						num_bytes_read := num_bytes_read + memory_data_width_in_bytes;
-						num_reads_remaining_in_burst := num_reads_remaining_in_burst - 1;
-						if to_integer(num_reads_remaining_in_burst) = 0 then
-							memory_read <= '0';
-							if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then --FIXME we need to take alignment into account, this may stop early
-								memory_burst_read_state <= memory_burst_read_state_initiate;
-							else
-								prefetch_complete(current_prefetch_index) <= '1';
-								current_prefetch_index := -1;
-								memory_burst_read_state <= memory_burst_read_state_idle;
-							end if;
+				if buffer_base_address /= 0 then
+					-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
+					memory_address <= std_logic_vector(buffer_base_address + resize(prefetch_address * memory_data_width_in_bytes, memory_address'length) + num_bytes_read);
+					num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
+					memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
+					memory_read <= '1';
+					memory_burst_read_state <= memory_burst_read_state_collect;
+				end if;
+				
+			elsif memory_burst_read_state = memory_burst_read_state_collect then
+				if to_X01(memory_readdatavalid) = '1' then
+					cache_write_address <= resize(prefetch_address, cache_address_width) + num_bytes_read / memory_data_width_in_bytes;
+					cache_write_enable <= '1';
+					cache_write_data <= memory_readdata;
+					num_bytes_read := num_bytes_read + memory_data_width_in_bytes;
+					num_reads_remaining_in_burst := num_reads_remaining_in_burst - 1;
+					if to_integer(num_reads_remaining_in_burst) = 0 then
+						memory_read <= '0';
+						if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then --FIXME we need to take alignment into account, this may stop early
+							memory_burst_read_state <= memory_burst_read_state_initiate;
+						else
+							prefetch_complete <= '1';
+							memory_burst_read_state <= memory_burst_read_state_idle;
 						end if;
 					end if;
 				end if;
@@ -494,7 +477,7 @@ begin
 						clear_slave_irq <= '1';
 					end if;
 				when 16#4# =>
-					buffer_base_address <= unsigned(to_X01(slave_writedata));
+					buffer_base_address <= resize(unsigned(to_X01(slave_writedata)), memory_address_width);
 				when 16#8# =>
 					temp_frame_width := unsigned(to_X01(slave_writedata(requested_frame_width'length - 1 downto 0)));
 					if temp_frame_width <= max_frame_width then
