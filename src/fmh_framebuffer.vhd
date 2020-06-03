@@ -100,7 +100,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal slave_irq_enable: std_logic;
 	signal raw_slave_irq: std_logic;
 	signal clear_slave_irq: std_logic; -- pulsed
-	
+
 begin
 	
 	assert num_color_planes = 1 report "Only num_color_planes=1 is currently supported.";
@@ -204,7 +204,7 @@ begin
 				symbol_index_base <= (others => '0');
 
 				if vertical_flip = '1' then
-					start_row := frame_height - 1;
+					start_row := requested_frame_height - 1;
 					row_increment := -1;
 				else
 					start_row := (others => '0');
@@ -213,7 +213,7 @@ begin
 				current_row := start_row;
 
 				if horizontal_flip = '1' then
-					start_column := frame_width - 1;
+					start_column := requested_frame_width - 1;
 					column_increment := -1;
 				else
 					start_column := (others => '0');
@@ -226,8 +226,8 @@ begin
 				frame_height <= requested_frame_height;
 				if ready_to_send_frame then
 					prefetch_address <= 
-						calculate_prefetch_address(current_row, to_unsigned(0, current_column'length), frame_width);
-					cache_read_address <= calculate_cache_address(current_row, current_column, frame_width);
+						calculate_prefetch_address(current_row, to_unsigned(0, current_column'length), requested_frame_width);
+					cache_read_address <= calculate_cache_address(current_row, current_column, requested_frame_width);
 					request_prefetch <= '1';
 					packet_send_state <= packet_send_state_command;
 				end if;
@@ -300,7 +300,7 @@ begin
 					if to_X01(video_out_ready) = '1' then
 						beat_index <= beat_index + 1;
 						symbol_index_base <= symbol_index_base + colors_per_beat;
-						video_out_valid <= '1'; -- FIXME: take into account availablity of framebuffer data
+						video_out_valid <= '1';
 
 						if to_integer(beat_index) = 0 then
 							video_out_data <= (others => '0'); -- least significant nibble must be all 0's for video packet, the rest are don't care
@@ -314,7 +314,7 @@ begin
 							
 							-- prefetch next row
 							next_row := current_row + row_increment;
-							if next_row >= frame_width then
+							if next_row >= frame_height then
 								next_row := start_row;
 							end if;
 							if (current_column = start_column and next_row /= start_row) then
