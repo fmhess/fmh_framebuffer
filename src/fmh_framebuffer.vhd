@@ -21,7 +21,7 @@ entity fmh_framebuffer is
 		memory_bytes_per_pixel_per_plane: positive := 4;
 		memory_address_width: positive := 32;
 		memory_burstcount_width: positive := 5;
-		memory_data_width: positive := 64;
+		memory_data_width: positive := 128;
 		max_frame_width: positive := 16#1000#;
 		default_horizontal_flip: boolean := false;
 		default_vertical_flip: boolean := false
@@ -92,6 +92,8 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	
 	signal ready_to_send_frame: boolean;
 	signal go: std_logic;
+	signal horizontal_flip: std_logic;
+	signal vertical_flip: std_logic;
 	
 	-- irq
 	signal slave_irq_enable: std_logic;
@@ -141,8 +143,11 @@ begin
 		variable symbol_index: unsigned(31 downto 0);
 		variable current_column: unsigned(frame_width'range);
 		variable current_row: unsigned(frame_height'range);
+		variable start_column: unsigned(frame_width'range);
+		variable start_row: unsigned(frame_height'range);
 		variable next_row: unsigned(frame_height'range);
 		variable row_increment: integer range -1 to 1 := 1;
+		variable column_increment: integer range -1 to 1 := 1;
 
 		function calculate_cache_address(row: unsigned; column: unsigned; width: unsigned) 
 			return unsigned is
@@ -175,7 +180,8 @@ begin
 			next_row := (others => '0');
 			request_prefetch <= (others => '0');
 			prefetch_address <= (others => (others => '0'));
-			row_increment := 1;
+			row_increment := 0;
+			column_increment := 0;
 			raw_slave_irq <= '0';
 			cache_read_address <= (others => '0');
 		elsif rising_edge(clock) then
@@ -187,9 +193,25 @@ begin
 				video_out_endofpacket <= '0';
 				beat_index <= (others => '0');
 				symbol_index_base <= (others => '0');
-				current_column := (others => '0');
-				current_row := (others => '0');
-				row_increment := 1;
+
+				if vertical_flip = '1' then
+					start_row := frame_height - 1;
+					row_increment := -1;
+				else
+					start_row := (others => '0');
+					row_increment := 1;
+				end if;
+				current_row := start_row;
+
+				if horizontal_flip = '1' then
+					start_column := frame_width - 1;
+					column_increment := -1;
+				else
+					start_column := (others => '0');
+					column_increment := 1;
+				end if;
+				current_column := start_column;
+
 				next_row := current_row + row_increment;
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
@@ -242,6 +264,8 @@ begin
 					end if;
 
 				elsif packet_send_state = packet_send_state_video then
+					video_out_endofpacket <= '0';
+					
 					if to_X01(video_out_ready) = '1' and
 						request_prefetch(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) = '0' and
 						prefetch_complete(to_integer(current_row(log2_num_cache_rows - 1 downto 0))) = '0'
@@ -253,11 +277,9 @@ begin
 						if to_integer(beat_index) = 0 then
 							video_out_data <= (others => '0'); -- least significant nibble must be all 0's for video packet, the rest are don't care
 							video_out_startofpacket <= '1';
-							video_out_endofpacket <= '0';
 						else
 							video_out_data <= (others => '0');
 							video_out_startofpacket <= '0';
-							video_out_endofpacket <= '0';
 							
 							for i in 0 to (colors_per_pixel_per_plane * bits_per_color) - 1 loop
 								video_out_data(i) <= 
@@ -266,18 +288,20 @@ begin
 							
 							-- prefetch next row
 							next_row := current_row + row_increment;
-							if to_integer(current_column) = 0 then -- FIXME: will break when we support horizontal flip
+							if (horizontal_flip = '0' and current_column = 0) or
+								(horizontal_flip = '1' and current_column = frame_width - 1)
+							then
 								prefetch_address(to_integer(next_row(log2_num_cache_rows - 1 downto 0))) <= 
 									calculate_cache_address(next_row, to_unsigned(0, current_column'length), frame_width);
 								request_prefetch(to_integer(next_row(log2_num_cache_rows - 1 downto 0))) <= '1';
 							end if;
 							-- increment column/row
-							current_column := current_column + 1;
+							current_column := current_column + column_increment;
 							if current_column >= frame_width then
-								current_column := (others => '0');
+								current_column := start_column;
 								current_row := next_row;
 								if current_row >= frame_height then
-									current_row := (others => '0');
+									current_row := start_row;
 									video_out_endofpacket <= '1';
 									raw_slave_irq <= '1';
 									packet_send_state <= packet_send_state_idle;
@@ -403,6 +427,19 @@ begin
 			go <= '0';
 			slave_irq_enable <= '0';
 			clear_slave_irq <= '0';
+			
+			if default_horizontal_flip then
+				horizontal_flip <= '1'; 
+			else
+				horizontal_flip <= '0'; 
+			end if;
+			
+			if default_vertical_flip then
+				vertical_flip <= '1'; 
+			else
+				vertical_flip <= '0';
+			end if;
+			
 		elsif rising_edge(clock) then
 			clear_slave_irq <= '0';
 			
@@ -424,6 +461,9 @@ begin
 					end if;
 				when 16#9# =>
 					requested_frame_height <= unsigned(to_X01(slave_writedata(requested_frame_height'length - 1 downto 0)));
+				when 16#18# =>
+					horizontal_flip <= to_X01(slave_writedata(0));
+					vertical_flip <= to_X01(slave_writedata(1));
 				when others =>
 				end case;
 			end if;
