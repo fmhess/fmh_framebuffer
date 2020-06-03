@@ -350,7 +350,6 @@ begin
 					if buffer_base_address /= 0 then
 						-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
 						memory_address <= std_logic_vector(buffer_base_address + prefetch_address(current_prefetch_index) * memory_data_width_in_bytes + num_bytes_read);
---						memory_address <= std_logic_vector(buffer_base_address - 1);
 						num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
 						memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
 						memory_read <= '1';
@@ -366,7 +365,7 @@ begin
 						num_reads_remaining_in_burst := num_reads_remaining_in_burst - 1;
 						if to_integer(num_reads_remaining_in_burst) = 0 then
 							memory_read <= '0';
-							if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then
+							if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then --FIXME we need to take alignment into account, this may stop early
 								memory_burst_read_state <= memory_burst_read_state_initiate;
 							else
 								prefetch_complete(current_prefetch_index) <= '1';
@@ -429,7 +428,7 @@ begin
 				end case;
 			end if;
 			
-			prev_slave_write := slave_write;
+			prev_slave_write := to_X01(slave_write);
 		end if;
 	end process;
 
