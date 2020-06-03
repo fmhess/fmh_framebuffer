@@ -419,7 +419,7 @@ begin
 					buffer_base_address <= unsigned(to_X01(slave_writedata));
 				when 16#8# =>
 					temp_frame_width := unsigned(to_X01(slave_writedata(requested_frame_width'length - 1 downto 0)));
-					if temp_frame_width < max_frame_width then
+					if temp_frame_width <= max_frame_width then
 						requested_frame_width <= temp_frame_width;
 					end if;
 				when 16#9# =>
