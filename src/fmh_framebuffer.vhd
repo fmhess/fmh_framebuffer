@@ -193,11 +193,13 @@ begin
 			raw_slave_irq <= '0';
 			cache_read_address <= (others => '0');
 		elsif rising_edge(clock) then
+
+			video_out_valid <= '0';
+			video_out_data <= (others => '0');
+			video_out_startofpacket <= '0';
+			video_out_endofpacket <= '0';
+
 			if packet_send_state = packet_send_state_idle then
-				video_out_valid <= '0';
-				video_out_data <= (others => '0');
-				video_out_startofpacket <= '0';
-				video_out_endofpacket <= '0';
 				beat_index <= (others => '0');
 				symbol_index_base <= (others => '0');
 
@@ -240,11 +242,7 @@ begin
 							video_out_data(colors_per_beat * bits_per_color - 1 downto 4) <= (others => '0');
 							video_out_data(3 downto 0) <= "1111";
 							video_out_startofpacket <= '1';
-							video_out_endofpacket <= '0';
 						else
-							video_out_data <= (others => '0');
-							video_out_startofpacket <= '0';
-							video_out_endofpacket <= '0';
 							for i in 0 to colors_per_beat - 1 loop
 								symbol_index := symbol_index_base + i;
 
@@ -291,8 +289,6 @@ begin
 								end if;
 							end loop;
 						end if;
-					else
-						video_out_valid <= '0';
 					end if;
 
 				elsif packet_send_state = packet_send_state_wait_for_prefetch then
@@ -300,7 +296,6 @@ begin
 						packet_send_state <= packet_send_state_video;
 					end if;
 				elsif packet_send_state = packet_send_state_video then
-					video_out_endofpacket <= '0';
 					
 					if to_X01(video_out_ready) = '1' then
 						beat_index <= beat_index + 1;
@@ -311,8 +306,6 @@ begin
 							video_out_data <= (others => '0'); -- least significant nibble must be all 0's for video packet, the rest are don't care
 							video_out_startofpacket <= '1';
 						else
-							video_out_data <= (others => '0');
-							video_out_startofpacket <= '0';
 							
 							for i in 0 to (colors_per_pixel_per_plane * bits_per_color) - 1 loop
 								video_out_data(i) <= 
@@ -345,9 +338,6 @@ begin
 							end if;
 							cache_read_address <= calculate_cache_address(current_row, current_column, frame_width);
 						end if;
-						
-					else
-						video_out_valid <= '0';
 					end if;
 				end if;
 			end if;
