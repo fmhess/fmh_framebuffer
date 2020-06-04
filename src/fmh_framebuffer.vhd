@@ -169,6 +169,12 @@ begin
 			return to_integer((row * width + column) * memory_bytes_per_pixel_per_plane mod memory_data_width_in_bytes);
 		end function calculate_cache_byte_offset;
 		
+		-- numeric_std only defines addition with a R of type natural, but we need integer to support negative increments
+		function my_add (L: unsigned; R: integer) return unsigned is
+		begin
+			return L + unsigned(std_logic_vector(to_signed(R, L'length)));
+		end function my_add;
+		
 	begin
 		if to_X01(safe_reset) = '1' then
 			packet_send_state <= packet_send_state_idle;
@@ -221,7 +227,7 @@ begin
 				end if;
 				current_column := start_column;
 
-				next_row := current_row + row_increment;
+				next_row := my_add(current_row, row_increment);
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
 				if ready_to_send_frame then
@@ -313,7 +319,7 @@ begin
 							end loop;
 							
 							-- prefetch next row
-							next_row := current_row + row_increment;
+							next_row := my_add(current_row, row_increment);
 							if next_row >= frame_height then
 								next_row := start_row;
 							end if;
@@ -324,7 +330,7 @@ begin
 								request_prefetch <= '1';
 							end if;
 							-- increment column/row
-							current_column := current_column + column_increment;
+							current_column := my_add(current_column, column_increment);
 							if current_column >= frame_width then
 								current_column := start_column;
 								current_row := next_row;
