@@ -78,7 +78,9 @@ architecture behav of fmh_framebuffer_testbench is
 			memory_burstcount_width => memory_burstcount_width,
 			memory_data_width => memory_data_width,
 			memory_bytes_per_pixel_per_plane => memory_bytes_per_pixel_per_plane,
-			max_frame_width => 200
+			max_frame_width => 200,
+			default_horizontal_flip => false,
+			default_vertical_flip => false
 		)
 		port map (
 			clock => clock,
@@ -124,6 +126,7 @@ architecture behav of fmh_framebuffer_testbench is
 		variable prev_memory_read: std_logic;
 		variable delay_count: integer;
 		variable burst_address: unsigned(memory_address_width - 1 downto 0);
+		variable read_in_progress: boolean;
 	begin
 		if reset = '1' then
 			memory_readdata <= (others => '0');
@@ -134,20 +137,21 @@ architecture behav of fmh_framebuffer_testbench is
 			burst_count := (others => '0');
 			prev_memory_read := '0';
 			burst_address := (others => '0');
+			read_in_progress := false;
 		elsif rising_edge(clock) then
 			memory_readdata <= (others => '0');
 			memory_readdatavalid <= '0';
 			memory_waitrequest <= '0';
 			
-			if to_X01(memory_read) = '1' then
-
-				if prev_memory_read = '0' then
-					requested_burst_count := unsigned(memory_burstcount);
-					burst_count := (others => '0');
-					burst_address := unsigned(memory_address);
-					delay_count := 0;
-				end if;
-				
+			if to_X01(memory_read) = '1' and prev_memory_read = '0' then
+				requested_burst_count := unsigned(memory_burstcount);
+				burst_count := (others => '0');
+				burst_address := unsigned(memory_address);
+				delay_count := 0;
+				read_in_progress := true;
+			end if;
+			
+			if read_in_progress then
 				delay_count := (delay_count + 1) mod 6;
 				if delay_count /= 0 then
 					memory_readdatavalid <= '0';
@@ -171,6 +175,8 @@ architecture behav of fmh_framebuffer_testbench is
 							burst_address := burst_address + memory_bytes_per_pixel_per_plane;	
 						end loop;
 						burst_count := burst_count + 1;
+					else
+						read_in_progress := false;
 					end if;
 				end if;
 			else

@@ -369,7 +369,7 @@ begin
 		variable num_bytes_read: integer range 0 to 
 			max_memory_reads_per_row * memory_data_width_in_bytes; 
  		variable num_reads_remaining_in_burst: unsigned(memory_burstcount_width - 1 downto 0);
-
+		variable read_request_accepted: boolean;
 		begin
 		if to_X01(safe_reset) = '1' then
 			memory_address <= (others => '0');
@@ -382,6 +382,7 @@ begin
 			cache_write_address <= (others => '0');
 			cache_write_enable <= '0';
 			cache_write_data <= (others => '0');
+			read_request_accepted := false;
 		elsif rising_edge(clock) then
 			-- clear prefetch_complete as needed
 			if prefetch_complete = '1' and request_prefetch = '0' then
@@ -412,18 +413,23 @@ begin
  					
 					memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
 					memory_read <= '1';
+					read_request_accepted := false;
 					memory_burst_read_state <= memory_burst_read_state_collect;
 				end if;
 				
 			elsif memory_burst_read_state = memory_burst_read_state_collect then
-				if to_X01(memory_readdatavalid) = '1' then
+				if to_X01(memory_waitrequest) = '0' then
+					read_request_accepted := true;
+					memory_read <= '0';
+				end if;
+				
+				if to_X01(memory_readdatavalid) = '1' and read_request_accepted then
 					cache_write_address <= resize(prefetch_address, cache_address_width) + num_bytes_read / memory_data_width_in_bytes;
 					cache_write_enable <= '1';
 					cache_write_data <= memory_readdata;
 					num_bytes_read := num_bytes_read + memory_data_width_in_bytes;
 					num_reads_remaining_in_burst := num_reads_remaining_in_burst - 1;
 					if to_integer(num_reads_remaining_in_burst) = 0 then
-						memory_read <= '0';
 						if num_memory_reads_completed(num_bytes_read) < num_memory_reads_per_row(to_integer(frame_width)) then
 							memory_burst_read_state <= memory_burst_read_state_initiate;
 						else
