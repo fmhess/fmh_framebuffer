@@ -17,6 +17,10 @@ architecture behav of fmh_framebuffer_testbench is
 	constant memory_data_width : positive := 64;
 	constant memory_bytes_per_pixel_per_plane: positive := 4;
 	
+	constant buffer_base_address: unsigned(memory_address_width - 1 downto 0) := X"80000000";
+	constant frame_width: unsigned(15 downto 0) := to_unsigned(100, 16);
+	constant frame_height: unsigned(15 downto 0) := to_unsigned(40, 16);
+	
 	signal clock : std_logic;
 	signal reset : std_logic;
 	signal memory_address: std_logic_vector(memory_address_width - 1 downto 0);
@@ -74,7 +78,7 @@ architecture behav of fmh_framebuffer_testbench is
 			memory_burstcount_width => memory_burstcount_width,
 			memory_data_width => memory_data_width,
 			memory_bytes_per_pixel_per_plane => memory_bytes_per_pixel_per_plane,
-			max_frame_width => 400
+			max_frame_width => 200
 		)
 		port map (
 			clock => clock,
@@ -115,35 +119,62 @@ architecture behav of fmh_framebuffer_testbench is
 	process(clock, reset)
 		constant memory_width_in_pixels: natural := memory_data_width / (memory_bytes_per_pixel_per_plane * 8);
 		variable test_value: unsigned(memory_bytes_per_pixel_per_plane * 8 - 1 downto 0);
+		variable requested_burst_count: unsigned(memory_burstcount'range);
 		variable burst_count: unsigned(memory_burstcount'range);
 		variable prev_memory_read: std_logic;
+		variable delay_count: integer;
+		variable burst_address: unsigned(memory_address_width - 1 downto 0);
 	begin
 		if reset = '1' then
 			memory_readdata <= (others => '0');
 			memory_readdatavalid <= '0';
 			memory_waitrequest <= '0';
 			test_value := (others => '0');
+			requested_burst_count := (others => '0');
 			burst_count := (others => '0');
 			prev_memory_read := '0';
+			burst_address := (others => '0');
 		elsif rising_edge(clock) then
 			memory_readdata <= (others => '0');
 			memory_readdatavalid <= '0';
 			memory_waitrequest <= '0';
 			
 			if to_X01(memory_read) = '1' then
+
 				if prev_memory_read = '0' then
-					burst_count := unsigned(memory_burstcount);
+					requested_burst_count := unsigned(memory_burstcount);
+					burst_count := (others => '0');
+					burst_address := unsigned(memory_address);
+					delay_count := 0;
 				end if;
 				
-				if burst_count > 0 then
-					memory_readdatavalid <= '1';
-					for i in 0 to memory_width_in_pixels - 1 loop
-						memory_readdata((i + 1) * memory_bytes_per_pixel_per_plane * 8 - 1 downto i * memory_bytes_per_pixel_per_plane * 8) <=
-							std_logic_vector(test_value);
-						test_value := test_value + 1;
-					end loop;
-					burst_count := burst_count - 1;
+				delay_count := (delay_count + 1) mod 6;
+				if delay_count /= 0 then
+					memory_readdatavalid <= '0';
+				else
+
+					memory_readdatavalid <= '1';				
+					
+					if burst_count < requested_burst_count then
+						memory_readdatavalid <= '1';
+						for i in 0 to memory_width_in_pixels - 1 loop
+							if burst_address < buffer_base_address then
+								test_value := (others => '0');
+							elsif burst_address >= buffer_base_address + frame_width * frame_height * memory_bytes_per_pixel_per_plane then
+								test_value := (others => '1');
+							else
+								test_value := resize(unsigned(burst_address) - buffer_base_address, test_value'length) / memory_bytes_per_pixel_per_plane;
+							end if;
+
+							memory_readdata((i + 1) * memory_bytes_per_pixel_per_plane * 8 - 1 downto i * memory_bytes_per_pixel_per_plane * 8) <=
+								std_logic_vector(test_value);
+							burst_address := burst_address + memory_bytes_per_pixel_per_plane;	
+						end loop;
+						burst_count := burst_count + 1;
+					end if;
 				end if;
+			else
+				delay_count := 0;
 			end if;
 			
 			prev_memory_read := to_X01(memory_read);
@@ -152,11 +183,29 @@ architecture behav of fmh_framebuffer_testbench is
 	
 	-- Avalon ST Video process
 	process(clock, reset)
+		variable beat: natural;
+		variable in_video_packet: boolean;
 	begin
 		if reset = '1' then
+			beat := 0;
 			video_out_ready <= '0';
+			in_video_packet := false;
 		elsif rising_edge(clock) then
 			video_out_ready <= '1';
+			if in_video_packet = false then
+				beat := 0;
+			end if;
+			
+			if in_video_packet and video_out_valid = '1' then
+				assert unsigned(video_out_data) = beat;
+				beat := beat + 1;
+			end if;			
+			if video_out_startofpacket = '1' and video_out_data(3 downto 0) = X"0" then
+				in_video_packet := true;
+			end if;
+			if video_out_endofpacket = '1' then
+				in_video_packet := false;
+			end if;
 		end if;
 	end process;
 	
@@ -174,14 +223,16 @@ architecture behav of fmh_framebuffer_testbench is
 		reset <= '0';
 		wait until rising_edge(clock);
 
-		host_write(8, X"00000028"); -- frame width
-		host_write(9, X"0000000a"); -- frame height
-		host_write(4, X"80000000"); -- base address
+ 		host_write(8, std_logic_vector(resize(frame_width, 32))); -- frame width
+ 		host_write(9, std_logic_vector(resize(frame_height, 32))); -- frame height
+		host_write(4, std_logic_vector(buffer_base_address)); -- base address
 		host_write(0, X"00000003"); -- go and enable irq
 
-		wait until slave_irq = '1';
-
-		host_write(2, X"00000001"); -- clear irq
+		for i in 0 to 1 loop
+			wait until slave_irq = '1';
+			assert false report "completed a frame" severity note;
+			host_write(2, X"00000001"); -- clear irq
+		end loop;
 		
 		wait_for_ticks(2);
 		assert false report "end of test" severity note;
