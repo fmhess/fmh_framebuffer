@@ -2,7 +2,7 @@
 -- Copyright 2020 Fluke Corporation
 
 -- TODO
--- implement colors_per_pixel_per_plane and support colors_per_beat < colors_per_pixel_per_plane
+-- support colors_per_beat < colors_per_pixel_per_plane
 
 
 library IEEE;
@@ -24,8 +24,7 @@ entity fmh_framebuffer is
 		memory_data_width: positive := 64;
 		max_frame_width: positive := 16#1000#;
 		default_horizontal_flip: boolean := false;
-		default_vertical_flip: boolean := false;
-		avalon_st_first_symbol_in_high_order_bits: boolean := true -- unimplemented
+		default_vertical_flip: boolean := false
 	);
 	port(
 		clock: in std_logic;
@@ -104,6 +103,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 begin
 	
 	assert num_color_planes = 1 report "Only num_color_planes=1 is currently supported.";
+	assert colors_per_beat >= colors_per_pixel_per_plane report "colors_per_beat < colors_per_pixel_per_plane not currently supported.";
 	
 	my_ocram : entity work.fmh_framebuffer_ocram
 		generic map (
@@ -355,10 +355,22 @@ begin
 	
 	-- read buffer memory
 	process(safe_reset, clock)
-		variable num_reads_remaining_in_burst: unsigned(memory_burstcount_width - 1 downto 0);
+		function num_memory_reads_completed(bytes: natural) return natural is
+		begin
+			return bytes / memory_data_width_in_bytes;
+		end function num_memory_reads_completed;
+		
+		function num_memory_reads_per_row(width: positive) return natural is
+		begin
+			return (width * memory_bytes_per_pixel_per_plane + memory_data_width_in_bytes - 1) / memory_data_width_in_bytes;
+		end function num_memory_reads_per_row;
+
+		constant max_memory_reads_per_row: natural := num_memory_reads_per_row(max_frame_width);
 		variable num_bytes_read: integer range 0 to 
-			max_frame_width * memory_bytes_per_pixel_per_plane; 
-	begin
+			max_memory_reads_per_row * memory_data_width_in_bytes; 
+ 		variable num_reads_remaining_in_burst: unsigned(memory_burstcount_width - 1 downto 0);
+
+		begin
 		if to_X01(safe_reset) = '1' then
 			memory_address <= (others => '0');
 			memory_burstcount <= (others => '0');
@@ -388,9 +400,16 @@ begin
 			elsif memory_burst_read_state = memory_burst_read_state_initiate then
 
 				if buffer_base_address /= 0 then
-					-- FIXME: be more careful to align reads and avoid reading beyond end of buffer
 					memory_address <= std_logic_vector(buffer_base_address + resize(prefetch_address * memory_data_width_in_bytes, memory_address'length) + num_bytes_read);
+					
 					num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
+					if to_unsigned(num_memory_reads_completed(num_bytes_read), 16) + num_reads_remaining_in_burst >
+						num_memory_reads_per_row(to_integer(frame_width)) 
+					then
+						num_reads_remaining_in_burst := to_unsigned(num_memory_reads_per_row(to_integer(frame_width)) - 
+							num_memory_reads_completed(num_bytes_read), num_reads_remaining_in_burst'length);
+ 					end if;
+ 					
 					memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
 					memory_read <= '1';
 					memory_burst_read_state <= memory_burst_read_state_collect;
@@ -405,7 +424,7 @@ begin
 					num_reads_remaining_in_burst := num_reads_remaining_in_burst - 1;
 					if to_integer(num_reads_remaining_in_burst) = 0 then
 						memory_read <= '0';
-						if num_bytes_read < frame_width * memory_bytes_per_pixel_per_plane then --FIXME we need to take alignment into account, this may stop early
+						if num_memory_reads_completed(num_bytes_read) < num_memory_reads_per_row(to_integer(frame_width)) then
 							memory_burst_read_state <= memory_burst_read_state_initiate;
 						else
 							prefetch_complete <= '1';
