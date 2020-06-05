@@ -59,7 +59,7 @@ at <https://github.com/fmhess/fmh_framebuffer> .
 	  
 	  The simple standalone rotator mentioned above would still
 	  add the overhead of an additional read/write of the
-	  video data to/from RAM, which an integrated framebuffer/rotator
+	  video data from/to RAM, which an integrated framebuffer/rotator
 	  does not.
 
 ## Author
