@@ -369,7 +369,7 @@ begin
 		
 		function num_memory_reads_per_row(width: positive) return natural is
 		begin
-			return (width * memory_bytes_per_pixel_per_plane + memory_data_width_in_bytes - 1) / memory_data_width_in_bytes;
+			return (width * memory_bytes_per_pixel_per_plane + memory_data_width_in_bytes - 1) / memory_data_width_in_bytes + 1;
 		end function num_memory_reads_per_row;
 
 		constant max_memory_reads_per_row: natural := num_memory_reads_per_row(max_frame_width);
@@ -422,10 +422,10 @@ begin
  					end if;
 					beyond_end_of_buffer := buffer_base_address + resize((frame_width * frame_height) * memory_bytes_per_pixel_per_plane, memory_address_width);
 					if buffer_base_address + prefetch_address * memory_data_width_in_bytes + num_bytes_read >=
-						beyond_end_of_buffer 
+						beyond_end_of_buffer
 					then
 						num_reads_remaining_in_burst := (beyond_end_of_buffer - (buffer_base_address + prefetch_address * memory_data_width_in_bytes + num_bytes_read) + memory_data_width_in_bytes - 1) / memory_data_width_in_bytes;
- 					end if;
+					end if;
  					
 					memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
 					memory_read <= '1';
