@@ -127,27 +127,34 @@ architecture behav of fmh_framebuffer_testbench is
 		variable delay_count: integer;
 		variable burst_address: unsigned(memory_address_width - 1 downto 0);
 		variable read_in_progress: boolean;
+		variable beyond_end_of_buffer: unsigned(memory_address_width - 1 downto 0);
 	begin
 		if reset = '1' then
 			memory_readdata <= (others => '0');
 			memory_readdatavalid <= '0';
-			memory_waitrequest <= '0';
+			memory_waitrequest <= '1';
 			test_value := (others => '0');
 			requested_burst_count := (others => '0');
 			burst_count := (others => '0');
 			prev_memory_read := '0';
 			burst_address := (others => '0');
 			read_in_progress := false;
+			beyond_end_of_buffer := (others => '0');
 		elsif rising_edge(clock) then
 			memory_readdata <= (others => '0');
 			memory_readdatavalid <= '0';
-			memory_waitrequest <= '0';
-			
-			if to_X01(memory_read) = '1' and prev_memory_read = '0' then
+
+			if to_X01(memory_read) = '1' and read_in_progress = false then
+                memory_waitrequest <= '0';
+			end if;
+
+			if to_X01(memory_read) = '1' and memory_waitrequest = '0' then
 				requested_burst_count := unsigned(memory_burstcount);
 				burst_count := (others => '0');
 				burst_address := unsigned(memory_address);
+				assert burst_address >= buffer_base_address;
 				delay_count := 0;
+				memory_waitrequest <= '1';
 				read_in_progress := true;
 			end if;
 			
@@ -161,14 +168,15 @@ architecture behav of fmh_framebuffer_testbench is
 					
 					if burst_count < requested_burst_count then
 						memory_readdatavalid <= '1';
+
+						-- assert that the first address of the first byte in the read is inside the framebuffer
+						beyond_end_of_buffer := buffer_base_address + resize((frame_width * frame_height + 1) * memory_bytes_per_pixel_per_plane, memory_address_width);
+						if burst_address >= beyond_end_of_buffer then
+								assert false;
+						end if;
+						
 						for i in 0 to memory_width_in_pixels - 1 loop
-							if burst_address < buffer_base_address then
-								test_value := (others => '0');
-							elsif burst_address >= buffer_base_address + frame_width * frame_height * memory_bytes_per_pixel_per_plane then
-								test_value := (others => '1');
-							else
-								test_value := resize(unsigned(burst_address) - buffer_base_address, test_value'length) / memory_bytes_per_pixel_per_plane;
-							end if;
+							test_value := resize(unsigned(burst_address) - buffer_base_address, test_value'length) / memory_bytes_per_pixel_per_plane;
 
 							memory_readdata((i + 1) * memory_bytes_per_pixel_per_plane * 8 - 1 downto i * memory_bytes_per_pixel_per_plane * 8) <=
 								std_logic_vector(test_value);
