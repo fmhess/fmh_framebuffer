@@ -168,7 +168,7 @@ architecture behav of fmh_framebuffer_testbench is
 						memory_readdatavalid <= '1';
 
 						-- assert that the first address of the first byte in the read is inside the framebuffer
-						beyond_end_of_buffer := buffer_base_address + resize((frame_width * frame_height + 1) * memory_bytes_per_pixel_per_plane, memory_address_width);
+						beyond_end_of_buffer := buffer_base_address + resize((frame_width * frame_height) * memory_bytes_per_pixel_per_plane, memory_address_width);
 						if burst_address >= beyond_end_of_buffer then
 								assert false;
 						end if;

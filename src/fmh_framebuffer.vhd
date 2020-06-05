@@ -9,6 +9,7 @@ library IEEE;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use IEEE.math_real.ceil;
+use IEEE.math_real.round;
 use IEEE.math_real.log2;
 use work.fmh_framebuffer_ocram; 
 
@@ -73,7 +74,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal buffer_base_address: unsigned(memory_address_width - 1 downto 0);
 	
 	-- buffer row cache stuff
-	constant log2_memory_data_width_in_bytes: positive := integer(log2(real(memory_data_width / 8)));
+	constant log2_memory_data_width_in_bytes: positive := integer(round(log2(real(memory_data_width_in_bytes))));
 	constant log2_num_cache_rows : positive := 1;
 	constant num_cache_rows : positive := 2 ** log2_num_cache_rows;
 	signal request_prefetch: std_logic;
@@ -376,6 +377,8 @@ begin
 			max_memory_reads_per_row * memory_data_width_in_bytes; 
  		variable num_reads_remaining_in_burst: unsigned(memory_burstcount_width - 1 downto 0);
 		variable read_request_accepted: boolean;
+		variable beyond_end_of_buffer: unsigned(memory_address_width - 1 downto 0);
+
 		begin
 		if to_X01(safe_reset) = '1' then
 			memory_address <= (others => '0');
@@ -389,6 +392,7 @@ begin
 			cache_write_enable <= '0';
 			cache_write_data <= (others => '0');
 			read_request_accepted := false;
+			beyond_end_of_buffer := (others => '0');
 		elsif rising_edge(clock) then
 			-- clear prefetch_complete as needed
 			if prefetch_complete = '1' and request_prefetch = '0' then
@@ -407,14 +411,20 @@ begin
 			elsif memory_burst_read_state = memory_burst_read_state_initiate then
 
 				if buffer_base_address /= 0 then
-					memory_address <= std_logic_vector(buffer_base_address + resize(prefetch_address * memory_data_width_in_bytes, memory_address'length) + num_bytes_read);
-					
+					memory_address <= std_logic_vector(buffer_base_address + resize(prefetch_address * memory_data_width_in_bytes, memory_address_width) + num_bytes_read);
+
 					num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
 					if to_unsigned(num_memory_reads_completed(num_bytes_read), 16) + num_reads_remaining_in_burst >
 						num_memory_reads_per_row(to_integer(frame_width)) 
 					then
 						num_reads_remaining_in_burst := to_unsigned(num_memory_reads_per_row(to_integer(frame_width)) - 
 							num_memory_reads_completed(num_bytes_read), num_reads_remaining_in_burst'length);
+ 					end if;
+					beyond_end_of_buffer := buffer_base_address + resize((frame_width * frame_height) * memory_bytes_per_pixel_per_plane, memory_address_width);
+					if buffer_base_address + prefetch_address * memory_data_width_in_bytes + num_bytes_read >=
+						beyond_end_of_buffer 
+					then
+						num_reads_remaining_in_burst := (beyond_end_of_buffer - (buffer_base_address + prefetch_address * memory_data_width_in_bytes + num_bytes_read) + memory_data_width_in_bytes - 1) / memory_data_width_in_bytes;
  					end if;
  					
 					memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
