@@ -123,7 +123,6 @@ architecture behav of fmh_framebuffer_testbench is
 		variable test_value: unsigned(memory_bytes_per_pixel_per_plane * 8 - 1 downto 0);
 		variable requested_burst_count: unsigned(memory_burstcount'range);
 		variable burst_count: unsigned(memory_burstcount'range);
-		variable prev_memory_read: std_logic;
 		variable delay_count: integer;
 		variable burst_address: unsigned(memory_address_width - 1 downto 0);
 		variable read_in_progress: boolean;
@@ -136,7 +135,6 @@ architecture behav of fmh_framebuffer_testbench is
 			test_value := (others => '0');
 			requested_burst_count := (others => '0');
 			burst_count := (others => '0');
-			prev_memory_read := '0';
 			burst_address := (others => '0');
 			read_in_progress := false;
 			beyond_end_of_buffer := (others => '0');
@@ -190,8 +188,6 @@ architecture behav of fmh_framebuffer_testbench is
 			else
 				delay_count := 0;
 			end if;
-			
-			prev_memory_read := to_X01(memory_read);
 		end if;
 	end process;
 	
