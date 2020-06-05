@@ -15,8 +15,9 @@ Linux driver.
 ## Status
 It works.  It has been tested on a Cyclone V HPS system while
 clocked at 60 MHz.  It was connected to RAM through a 64 bit
-AXI bus, and its video output connected to a VIP Clocked Video Output
-displaying 24 bit truecolor at 800x480 resolution.
+AXI bus.  Its video output sent 4 color channels of 8 bits
+per color to a VIP Clocked Video Output
+running at 800x480 resolution.
 
 The latest version of this core may be found
 at <https://github.com/fmhess/fmh_framebuffer> .
@@ -35,13 +36,17 @@ at <https://github.com/fmhess/fmh_framebuffer> .
 	  output a video stream.  A standalone rotator needs to do this
 	  as well, and additionally needs to write RAM and receive an
 	  input video stream.
+	  
+	  Although, you could write a simple standalone rotator which
+	  simply reads and writes RAM without connecting directly to
+	  the video streams of any VIP components.
 	* A2: An integrated framebuffer/rotator is more efficient than
 	  a standalone rotator.  The Avalon ST Video stream sends video
 	  frames in a fixed order.  The rows of pixels are sent starting
 	  from the top row and then working down.  Thus, in order to perform
 	  a rotation or vertical flip a standalone rotator needs to
-	  buffer an entire frame to the last row before it can begin sending 
-	  the first row of the rotated output frame.  
+	  buffer an entire frame in RAM down to the last row before 
+	  it can begin sending the first row of the rotated output frame.  
 	  
 	  On the other hand, an integrated framebuffer/rotator gets its
 	  input from RAM which it can read in any order.  Thus it can
@@ -51,6 +56,11 @@ at <https://github.com/fmhess/fmh_framebuffer> .
 	  rotated.  90 degree rotations can be achieved efficiently
 	  while only needing to cache a few columns at once of the input 
 	  frame.
+	  
+	  The simple standalone rotator mentioned above would still
+	  add the overhead of an additional read/write of the
+	  video data to/from RAM, which an integrated framebuffer/rotator
+	  does not.
 
 ## Author
 Frank Mori Hess fmh6jj@gmail.com
