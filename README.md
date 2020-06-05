@@ -4,7 +4,6 @@ such, It is compatible with the various components of the Intel
 Video and Image Processing Suite (VIP).
 It is capable of flipping its output horizontally or vertically, the
 combination of which can acheive 180 degree rotation.
-It does not currently support 90 degree rotations.
 
 It implements enough register level compatibility to be a
 drop-in replacement for the old Intel (Altera) Frame Reader
@@ -19,6 +18,12 @@ AXI bus.  Its video output sent 4 color channels of 8 bits
 per color to a VIP Clocked Video Output
 running at 800x480 resolution.
 
+### Limitations
+* Only a single color plane per frame is supported (num_color_planes = 1).
+* All colors of a pixel must be transmitted in parallel on the same beat
+  (colors_per_beat must be a multiple of colors_per_pixel_per_plane).
+* 90 degree rotations are not supported.
+
 The latest version of this core may be found
 at <https://github.com/fmhess/fmh_framebuffer> .
 
@@ -27,40 +32,31 @@ at <https://github.com/fmhess/fmh_framebuffer> .
 * Q: Why did you bother?  The VIP suite already has framebuffer cores.
 	* A: We needed a core capable of rotating its output by 180 degrees,
 	  which is a capability the VIP framebuffers do not provide.
-* Q: Okay then, why didn't you make a standalone rotator component instead
+* Q: Why didn't you make a dedicated rotator for VIP instead
   of an integrated framebuffer/rotator?  The VIP suite is designed to
   consist of modular components which can be mixed and matched as
   the user desires.
-	* A1: It is easier to write an integrated framebuffer/rotator than
-	  a standalone rotator.  A framebuffer only needs to read RAM and
-	  output a video stream.  A standalone rotator needs to do this
+	* A1: It is easier to write an simple integrated framebuffer/rotator 
+      than a pure rotator.  A framebuffer only needs to read RAM and
+	  output a video stream.  A pure rotator needs to do this
 	  as well, and additionally needs to write RAM and receive an
 	  input video stream.
-	  
-	  Although, you could write a simple standalone rotator which
-	  simply reads and writes RAM without connecting directly to
-	  the video streams of any VIP components.
 	* A2: An integrated framebuffer/rotator is more efficient than
-	  a standalone rotator.  The Avalon ST Video stream sends video
-	  frames in a fixed order.  The rows of pixels are sent starting
+	  a pure VIP rotator.  The Avalon ST Video stream sends video
+	  frames in a prescribed order.  The rows of pixels are sent starting
 	  from the top row and then working down.  Thus, in order to perform
-	  a rotation or vertical flip a standalone rotator needs to
+	  a rotation or vertical flip, a pure VIP rotator needs to
 	  buffer an entire frame in RAM down to the last row before 
 	  it can begin sending the first row of the rotated output frame.  
 	  
 	  On the other hand, an integrated framebuffer/rotator gets its
-	  input from RAM which it can read in any order.  Thus it can
-	  begin output immediately and only needs to cache a single
+	  input from RAM which it can read in any order.  Thus it only 
+	  needs to cache a single
 	  row of the input frame at once in order to output a frame
 	  which is vertically or horizontally flipped, or 180 degree
 	  rotated.  90 degree rotations can be achieved efficiently
-	  while only needing to cache a few columns at once of the input 
-	  frame.
-	  
-	  The simple standalone rotator mentioned above would still
-	  add the overhead of an additional read/write of the
-	  video data from/to RAM, which an integrated framebuffer/rotator
-	  does not.
+	  while only needing to cache a few columns of the input 
+	  frame at once.
 
 ## Author
 Frank Mori Hess fmh6jj@gmail.com
