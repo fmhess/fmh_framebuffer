@@ -81,7 +81,8 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal prefetch_complete: std_logic;
 	constant cache_address_width: natural := integer(ceil(log2(real(max_frame_width * memory_bytes_per_pixel_per_plane / memory_data_width_in_bytes + 1)))) + 
 		log2_num_cache_rows;
-	signal prefetch_address: unsigned(memory_address_width - 1 downto log2_memory_data_width_in_bytes);
+	signal prefetch_start_address: unsigned(memory_address_width - 1 downto log2_memory_data_width_in_bytes);
+	signal prefetch_end_address: unsigned(memory_address_width - 1 downto log2_memory_data_width_in_bytes);
 	signal cache_write_address: unsigned(cache_address_width - 1 downto 0);
 	signal cache_write_enable: std_logic;
 	signal cache_write_data: std_logic_vector(memory_data_width - 1 downto 0);
@@ -194,7 +195,8 @@ begin
 			start_row := (others => '0');
 			next_row := (others => '0');
 			request_prefetch <= '0';
-			prefetch_address <= (others => '0');
+			prefetch_start_address <= (others => '0');
+			prefetch_end_address <= (others => '0');
 			row_increment := 0;
 			column_increment := 0;
 			raw_slave_irq <= '0';
@@ -232,8 +234,10 @@ begin
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
 				if ready_to_send_frame then
-					prefetch_address <= 
+					prefetch_start_address <= 
 						calculate_prefetch_address(current_row, to_unsigned(0, current_column'length), requested_frame_width);
+					prefetch_end_address <= 
+						calculate_prefetch_address(current_row, requested_frame_width - 1, requested_frame_width) + 1;
 					cache_read_address <= calculate_cache_address(current_row, current_column, requested_frame_width);
 					request_prefetch <= '1';
 					packet_send_state <= packet_send_state_command;
@@ -325,8 +329,10 @@ begin
 								next_row := start_row;
 							end if;
 							if (current_column = start_column and next_row /= start_row) then
-								prefetch_address <= 
+								prefetch_start_address <= 
 									calculate_prefetch_address(next_row, to_unsigned(0, current_column'length), frame_width);
+								prefetch_end_address <= 
+									calculate_prefetch_address(next_row, frame_width - 1, frame_width) + 1;
 								assert request_prefetch = '0';
 								request_prefetch <= '1';
 							end if;
@@ -374,10 +380,20 @@ begin
 
 		constant max_memory_reads_per_row: natural := num_memory_reads_per_row(max_frame_width);
 		variable num_bytes_read: integer range 0 to 
-			max_memory_reads_per_row * memory_data_width_in_bytes; 
+			max_memory_reads_per_row * memory_data_width_in_bytes;
  		variable num_reads_remaining_in_burst: unsigned(memory_burstcount_width - 1 downto 0);
 		variable read_request_accepted: boolean;
-		variable beyond_end_of_buffer: unsigned(memory_address_width - 1 downto 0);
+
+		procedure calculate_burst_count(variable bcount: out unsigned ) is
+			variable total_reads_remaining: unsigned(prefetch_start_address'range);
+		begin
+			total_reads_remaining := prefetch_end_address - prefetch_start_address - num_memory_reads_completed(num_bytes_read);
+			if total_reads_remaining > max_burstcount then
+				bcount := to_unsigned(max_burstcount, bcount'length);
+			else
+				bcount := resize(total_reads_remaining, bcount'length);
+			end if;
+		end calculate_burst_count;
 
 		begin
 		if to_X01(safe_reset) = '1' then
@@ -392,7 +408,6 @@ begin
 			cache_write_enable <= '0';
 			cache_write_data <= (others => '0');
 			read_request_accepted := false;
-			beyond_end_of_buffer := (others => '0');
 		elsif rising_edge(clock) then
 			-- clear prefetch_complete as needed
 			if prefetch_complete = '1' and request_prefetch = '0' then
@@ -411,22 +426,10 @@ begin
 			elsif memory_burst_read_state = memory_burst_read_state_initiate then
 
 				if buffer_base_address /= 0 then
-					memory_address <= std_logic_vector(buffer_base_address + resize(prefetch_address * memory_data_width_in_bytes, memory_address_width) + num_bytes_read);
+					memory_address <= std_logic_vector(buffer_base_address + resize(prefetch_start_address * memory_data_width_in_bytes, memory_address_width) + num_bytes_read);
 
-					num_reads_remaining_in_burst := to_unsigned(max_burstcount, num_reads_remaining_in_burst'LENGTH);
-					if to_unsigned(num_memory_reads_completed(num_bytes_read), 16) + num_reads_remaining_in_burst >
-						num_memory_reads_per_row(to_integer(frame_width)) 
-					then
-						num_reads_remaining_in_burst := to_unsigned(num_memory_reads_per_row(to_integer(frame_width)) - 
-							num_memory_reads_completed(num_bytes_read), num_reads_remaining_in_burst'length);
- 					end if;
-					beyond_end_of_buffer := buffer_base_address + resize((frame_width * frame_height) * memory_bytes_per_pixel_per_plane, memory_address_width);
-					if buffer_base_address + prefetch_address * memory_data_width_in_bytes + num_bytes_read >=
-						beyond_end_of_buffer
-					then
-						num_reads_remaining_in_burst := (beyond_end_of_buffer - (buffer_base_address + prefetch_address * memory_data_width_in_bytes + num_bytes_read) + memory_data_width_in_bytes - 1) / memory_data_width_in_bytes;
-					end if;
- 					
+					calculate_burst_count(num_reads_remaining_in_burst);
+					
 					memory_burstcount <= std_logic_vector(num_reads_remaining_in_burst);
 					memory_read <= '1';
 					read_request_accepted := false;
@@ -440,13 +443,13 @@ begin
 				end if;
 				
 				if to_X01(memory_readdatavalid) = '1' and read_request_accepted then
-					cache_write_address <= resize(prefetch_address, cache_address_width) + num_bytes_read / memory_data_width_in_bytes;
+					cache_write_address <= resize(prefetch_start_address, cache_address_width) + num_memory_reads_completed(num_bytes_read);
 					cache_write_enable <= '1';
 					cache_write_data <= memory_readdata;
 					num_bytes_read := num_bytes_read + memory_data_width_in_bytes;
 					num_reads_remaining_in_burst := num_reads_remaining_in_burst - 1;
-					if to_integer(num_reads_remaining_in_burst) = 0 then
-						if num_memory_reads_completed(num_bytes_read) < num_memory_reads_per_row(to_integer(frame_width)) then
+					if num_reads_remaining_in_burst = 0 then
+						if num_memory_reads_completed(num_bytes_read) < prefetch_end_address - prefetch_start_address then
 							memory_burst_read_state <= memory_burst_read_state_initiate;
 						else
 							prefetch_complete <= '1';

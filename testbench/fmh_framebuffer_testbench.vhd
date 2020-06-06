@@ -167,7 +167,7 @@ architecture behav of fmh_framebuffer_testbench is
 					if burst_count < requested_burst_count then
 						memory_readdatavalid <= '1';
 
-						-- assert that the first address of the first byte in the read is inside the framebuffer
+						-- assert that the address of the first byte in the read is inside the framebuffer
 						beyond_end_of_buffer := buffer_base_address + resize((frame_width * frame_height) * memory_bytes_per_pixel_per_plane, memory_address_width);
 						if burst_address >= beyond_end_of_buffer then
 								assert false;
@@ -207,7 +207,7 @@ architecture behav of fmh_framebuffer_testbench is
 			end if;
 			
 			if in_video_packet and video_out_valid = '1' then
-				assert unsigned(video_out_data) = beat;
+				assert unsigned(video_out_data) = beat report "Unexpected video_out_data=" & integer'image(to_integer(unsigned(video_out_data))) & " on beat " & integer'image(beat);
 				beat := beat + 1;
 			end if;			
 			if video_out_startofpacket = '1' and video_out_data(3 downto 0) = X"0" then
