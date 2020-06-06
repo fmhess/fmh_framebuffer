@@ -516,6 +516,8 @@ begin
 					temp_frame_width := unsigned(to_X01(slave_writedata(requested_frame_width'length - 1 downto 0)));
 					if temp_frame_width <= max_frame_width then
 						requested_frame_width <= temp_frame_width;
+					else
+						assert false report "Attempted to set frame width beyond maximum.";
 					end if;
 				when 16#9# =>
 					requested_frame_height <= unsigned(to_X01(slave_writedata(requested_frame_height'length - 1 downto 0)));
