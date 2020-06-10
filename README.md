@@ -20,7 +20,7 @@ running at 800x480 resolution.
 
 ### Limitations
 * All colors of a pixel must be transmitted in parallel on the same beat
-  (colors_per_beat must be a multiple of colors_per_pixel_per_plane).
+  (colors_per_beat must be a multiple of colors_per_pixel).
 * 90 degree rotations are not supported.
 
 The latest version of this core may be found
