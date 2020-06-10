@@ -91,7 +91,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal requested_frame_height: unsigned(frame_height'range);
 	signal beat_index: unsigned(31 downto 0);
 	signal symbol_index_base: unsigned(31 downto 0);
-	constant interlacing: std_logic_vector(3 downto 0) := "0010"; -- progressive
+	signal interlacing: std_logic_vector(3 downto 0);
 	signal buffer_base_address: unsigned(memory_address_width - 1 downto 0);
 	
 	-- buffer row cache stuff
@@ -505,7 +505,7 @@ begin
 			go <= '0';
 			slave_irq_enable <= '0';
 			clear_slave_irq <= '0';
-			
+			interlacing <= "0011"; -- progressive
 			if default_horizontal_flip then
 				horizontal_flip <= '1'; 
 			else
@@ -541,6 +541,8 @@ begin
 					end if;
 				when 16#9# =>
 					requested_frame_height <= unsigned(to_X01(slave_writedata(requested_frame_height'length - 1 downto 0)));
+				when 16#a# =>
+					interlacing <= unsigned(to_X01(slave_writedata(interlacing'length - 1 downto 0)));
 				when 16#18# =>
 					horizontal_flip <= to_X01(slave_writedata(0));
 					vertical_flip <= to_X01(slave_writedata(1));
