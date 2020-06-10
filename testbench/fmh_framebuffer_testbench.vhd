@@ -15,7 +15,7 @@ architecture behav of fmh_framebuffer_testbench is
 	constant memory_address_width : positive := 32;
 	constant memory_burstcount_width : positive := 4;
 	constant memory_data_width : positive := 64;
-	constant memory_bytes_per_pixel_per_plane: positive := 4;
+	constant memory_bytes_per_pixel: positive := 4;
 	
 	constant buffer_base_address: unsigned(memory_address_width - 1 downto 0) := X"80000000";
 	constant frame_width: unsigned(15 downto 0) := to_unsigned(100, 16);
@@ -77,7 +77,7 @@ architecture behav of fmh_framebuffer_testbench is
 			memory_address_width => memory_address_width,
 			memory_burstcount_width => memory_burstcount_width,
 			memory_data_width => memory_data_width,
-			memory_bytes_per_pixel_per_plane => memory_bytes_per_pixel_per_plane,
+			memory_bytes_per_pixel => memory_bytes_per_pixel,
 			max_frame_width => 200,
 			default_horizontal_flip => false,
 			default_vertical_flip => false
@@ -119,8 +119,8 @@ architecture behav of fmh_framebuffer_testbench is
 
 	-- buffer RAM process
 	process(clock, reset)
-		constant memory_width_in_pixels: natural := memory_data_width / (memory_bytes_per_pixel_per_plane * 8);
-		variable test_value: unsigned(memory_bytes_per_pixel_per_plane * 8 - 1 downto 0);
+		constant memory_width_in_pixels: natural := memory_data_width / (memory_bytes_per_pixel * 8);
+		variable test_value: unsigned(memory_bytes_per_pixel * 8 - 1 downto 0);
 		variable requested_burst_count: unsigned(memory_burstcount'range);
 		variable burst_count: unsigned(memory_burstcount'range);
 		variable delay_count: integer;
@@ -168,17 +168,17 @@ architecture behav of fmh_framebuffer_testbench is
 						memory_readdatavalid <= '1';
 
 						-- assert that the address of the first byte in the read is inside the framebuffer
-						beyond_end_of_buffer := buffer_base_address + resize((frame_width * frame_height) * memory_bytes_per_pixel_per_plane, memory_address_width);
+						beyond_end_of_buffer := buffer_base_address + resize((frame_width * frame_height) * memory_bytes_per_pixel, memory_address_width);
 						if burst_address >= beyond_end_of_buffer then
 								assert false;
 						end if;
 						
 						for i in 0 to memory_width_in_pixels - 1 loop
-							test_value := resize(unsigned(burst_address) - buffer_base_address, test_value'length) / memory_bytes_per_pixel_per_plane;
+							test_value := resize(unsigned(burst_address) - buffer_base_address, test_value'length) / memory_bytes_per_pixel;
 
-							memory_readdata((i + 1) * memory_bytes_per_pixel_per_plane * 8 - 1 downto i * memory_bytes_per_pixel_per_plane * 8) <=
+							memory_readdata((i + 1) * memory_bytes_per_pixel * 8 - 1 downto i * memory_bytes_per_pixel * 8) <=
 								std_logic_vector(test_value);
-							burst_address := burst_address + memory_bytes_per_pixel_per_plane;	
+							burst_address := burst_address + memory_bytes_per_pixel;	
 						end loop;
 						burst_count := burst_count + 1;
 					else

@@ -15,7 +15,7 @@ entity fmh_framebuffer is
 		bits_per_color: positive := 8;
 		colors_per_pixel: positive := 4;
 		colors_per_beat: positive := 4; -- number of colors sent per beat of the Avalong ST Video output
-		memory_bytes_per_pixel_per_plane: positive := 4;
+		memory_bytes_per_pixel: positive := 4;
 		memory_address_width: positive := 32;
 		memory_burstcount_width: positive := 5;
 		memory_data_width: positive := 64;
@@ -99,7 +99,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	constant num_cache_rows : positive := 2;
 	signal request_prefetch: std_logic;
 	signal prefetch_complete: std_logic;
-	constant cache_address_width: natural := ceil_log2(to_unsigned((num_cache_rows * max_frame_width * memory_bytes_per_pixel_per_plane + memory_data_width - 1) / memory_data_width_in_bytes + 1, 32));
+	constant cache_address_width: natural := ceil_log2(to_unsigned((num_cache_rows * max_frame_width * memory_bytes_per_pixel + memory_data_width - 1) / memory_data_width_in_bytes + 1, 32));
 	signal prefetch_start_address: unsigned(memory_address_width - 1 downto log2_memory_data_width_in_bytes);
 	signal prefetch_end_address: unsigned(memory_address_width - 1 downto log2_memory_data_width_in_bytes);
 	signal cache_write_address: unsigned(cache_address_width - 1 downto 0);
@@ -174,7 +174,7 @@ begin
 		function calculate_prefetch_address(row: unsigned; column: unsigned; width: unsigned) 
 			return unsigned is
 		begin
-			return resize((row * width + column) * memory_bytes_per_pixel_per_plane / memory_data_width_in_bytes, memory_address_width - log2_memory_data_width_in_bytes);
+			return resize((row * width + column) * memory_bytes_per_pixel / memory_data_width_in_bytes, memory_address_width - log2_memory_data_width_in_bytes);
 		end function calculate_prefetch_address;
 
 		function calculate_cache_address(row: unsigned; column: unsigned; width: unsigned) 
@@ -186,7 +186,7 @@ begin
 		function calculate_cache_byte_offset(row: unsigned; column: unsigned; width: unsigned)
 			return natural is
 		begin
-			return to_integer((row * width + column) * memory_bytes_per_pixel_per_plane mod memory_data_width_in_bytes);
+			return to_integer((row * width + column) * memory_bytes_per_pixel mod memory_data_width_in_bytes);
 		end function calculate_cache_byte_offset;
 		
 		-- numeric_std only defines addition with a R of type natural, but we need integer to support negative increments
@@ -395,7 +395,7 @@ begin
 		
 		function num_memory_reads_per_row(width: positive) return natural is
 		begin
-			return (width * memory_bytes_per_pixel_per_plane + memory_data_width_in_bytes - 1) / memory_data_width_in_bytes + 1;
+			return (width * memory_bytes_per_pixel + memory_data_width_in_bytes - 1) / memory_data_width_in_bytes + 1;
 		end function num_memory_reads_per_row;
 
 		constant max_memory_reads_per_row: natural := num_memory_reads_per_row(max_frame_width);
