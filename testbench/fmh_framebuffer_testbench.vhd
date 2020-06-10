@@ -11,7 +11,7 @@ end fmh_framebuffer_testbench;
 architecture behav of fmh_framebuffer_testbench is
 	constant bits_per_color: positive := 8;
 	constant colors_per_beat: positive := 4;
-	constant colors_per_pixel_per_plane: positive := 4;
+	constant colors_per_pixel: positive := 4;
 	constant memory_address_width : positive := 32;
 	constant memory_burstcount_width : positive := 4;
 	constant memory_data_width : positive := 64;
@@ -73,7 +73,7 @@ architecture behav of fmh_framebuffer_testbench is
 		generic map (
 			bits_per_color => bits_per_color,
 			colors_per_beat => colors_per_beat,
-			colors_per_pixel_per_plane => colors_per_pixel_per_plane,
+			colors_per_pixel => colors_per_pixel,
 			memory_address_width => memory_address_width,
 			memory_burstcount_width => memory_burstcount_width,
 			memory_data_width => memory_data_width,

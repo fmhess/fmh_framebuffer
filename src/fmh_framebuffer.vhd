@@ -13,9 +13,8 @@ use work.fmh_framebuffer_ocram;
 entity fmh_framebuffer is
 	generic(
 		bits_per_color: positive := 8;
-		colors_per_pixel_per_plane: positive := 4;
-		colors_per_beat: positive := 4;
-		num_color_planes: positive := 1;
+		colors_per_pixel: positive := 4;
+		colors_per_beat: positive := 4; -- number of colors sent per beat of the Avalong ST Video output
 		memory_bytes_per_pixel_per_plane: positive := 4;
 		memory_address_width: positive := 32;
 		memory_burstcount_width: positive := 5;
@@ -124,8 +123,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 
 begin
 	
-	assert num_color_planes = 1 report "Only num_color_planes=1 is currently supported.";
-	assert colors_per_beat >= colors_per_pixel_per_plane report "colors_per_beat < colors_per_pixel_per_plane not currently supported.";
+	assert colors_per_beat >= colors_per_pixel report "colors_per_beat < colors_per_pixel not currently supported.";
 	
 	my_ocram : entity work.fmh_framebuffer_ocram
 		generic map (
@@ -341,7 +339,7 @@ begin
 						video_out_valid <= '1';
 
 							
-						for i in 0 to (colors_per_pixel_per_plane * bits_per_color) - 1 loop
+						for i in 0 to (colors_per_pixel * bits_per_color) - 1 loop
 							video_out_data(i) <= 
 								cache_read_data(calculate_cache_byte_offset(current_row, current_column, frame_width) * 8 + i);
 						end loop;

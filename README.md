@@ -19,7 +19,6 @@ per color to a VIP Clocked Video Output
 running at 800x480 resolution.
 
 ### Limitations
-* Only a single color plane per frame is supported (num_color_planes = 1).
 * All colors of a pixel must be transmitted in parallel on the same beat
   (colors_per_beat must be a multiple of colors_per_pixel_per_plane).
 * 90 degree rotations are not supported.
