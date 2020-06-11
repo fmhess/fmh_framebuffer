@@ -572,18 +572,18 @@ begin
 						clear_slave_irq <= '1';
 					end if;
 				when 16#4# =>
-					requested_buffer_base_address <= resize(unsigned(slave_writedata), memory_address_width);
+					requested_buffer_base_address <= resize(unsigned(to_X01(slave_writedata)), memory_address_width);
 				when 16#8# =>
-					temp_frame_width := unsigned(slave_writedata(requested_frame_width'length - 1 downto 0));
+					temp_frame_width := unsigned(to_X01(slave_writedata(requested_frame_width'length - 1 downto 0)));
 					if temp_frame_width <= max_frame_width then
 						requested_frame_width <= temp_frame_width;
 					else
 						assert false report "Attempted to set frame width beyond maximum.";
 					end if;
 				when 16#9# =>
-					requested_frame_height <= unsigned(slave_writedata(requested_frame_height'length - 1 downto 0));
+					requested_frame_height <= unsigned(to_X01(slave_writedata(requested_frame_height'length - 1 downto 0)));
 				when 16#a# =>
-					interlacing <= slave_writedata(interlacing'length - 1 downto 0);
+					interlacing <= to_X01(slave_writedata(interlacing'length - 1 downto 0));
 				when 16#18# =>
 					requested_horizontal_flip <= to_X01(slave_writedata(0));
 					requested_vertical_flip <= to_X01(slave_writedata(1));
