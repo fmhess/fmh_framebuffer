@@ -22,6 +22,7 @@ running at 800x480 resolution.
 * All colors of a pixel must be transmitted in parallel on the same beat
   (colors_per_beat must be a multiple of colors_per_pixel).
 * 90 degree rotations are not supported.
+* Progressive frames only, no interlaced.
 
 The latest version of this core may be found
 at <https://github.com/fmhess/fmh_framebuffer> .

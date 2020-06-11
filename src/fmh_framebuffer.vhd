@@ -2,7 +2,7 @@
 -- Copyright 2020 Fluke Corporation
 
 -- TODO
--- support colors_per_beat < colors_per_pixel_per_plane
+-- support colors_per_beat < colors_per_pixel
 
 
 library IEEE;
@@ -93,6 +93,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal symbol_index_base: unsigned(31 downto 0);
 	signal interlacing: std_logic_vector(3 downto 0);
 	signal buffer_base_address: unsigned(memory_address_width - 1 downto 0);
+	signal requested_buffer_base_address: unsigned(memory_address_width - 1 downto 0);
 	
 	-- buffer row cache stuff
 	constant log2_memory_data_width_in_bytes: positive := ceil_log2(to_unsigned(memory_data_width_in_bytes, 32));
@@ -115,6 +116,8 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 	signal go: std_logic;
 	signal horizontal_flip: std_logic;
 	signal vertical_flip: std_logic;
+	signal requested_horizontal_flip: std_logic;
+	signal requested_vertical_flip: std_logic;
 	
 	-- irq
 	signal slave_irq_enable: std_logic;
@@ -150,7 +153,6 @@ begin
 	end process;
  
 	ready_to_send_frame <= go = '1' and 
-		to_X01(video_out_ready) = '1' and
 		buffer_base_address /= 0 and
 		requested_frame_width /= 0 and
 		requested_frame_height /= 0 and
@@ -204,6 +206,7 @@ begin
 			video_out_endofpacket <= '0';
 			beat_index <= (others => '0');
 			symbol_index_base <= (others => '0');
+			buffer_base_address <= (others => '0');
 			frame_width <= (others => '0');
 			frame_height <= (others => '0');
 			symbol_index := (others => '0');
@@ -219,6 +222,8 @@ begin
 			column_increment := 0;
 			raw_slave_irq <= '0';
 			cache_read_address <= (others => '0');
+			horizontal_flip <= '0';
+			vertical_flip <= '0';
 		elsif rising_edge(clock) then
 
 			video_out_valid <= '0';
@@ -230,7 +235,8 @@ begin
 			if packet_send_state = packet_send_state_idle then
 				symbol_index_base <= (others => '0');
 
-				if vertical_flip = '1' then
+				vertical_flip <= requested_vertical_flip;
+				if requested_vertical_flip = '1' then
 					start_row := requested_frame_height - 1;
 					row_increment := -1;
 				else
@@ -239,7 +245,8 @@ begin
 				end if;
 				current_row := start_row;
 
-				if horizontal_flip = '1' then
+				horizontal_flip <= requested_horizontal_flip;
+				if requested_horizontal_flip = '1' then
 					start_column := requested_frame_width - 1;
 					column_increment := -1;
 				else
@@ -249,6 +256,7 @@ begin
 				current_column := start_column;
 
 				next_row := my_add(current_row, row_increment);
+				buffer_base_address <= requested_buffer_base_address;
 				frame_width <= requested_frame_width;
 				frame_height <= requested_frame_height;
 				if ready_to_send_frame then
@@ -484,11 +492,44 @@ begin
 
 	-- slave io port reads
 	process(safe_reset, clock)
+		variable prev_slave_read: std_logic;
 	begin
 		if to_X01(safe_reset) = '1' then
 			slave_readdata <= (others => '0');
+			prev_slave_read := '0';
 		elsif rising_edge(clock) then
-			slave_readdata <= (others => '0');
+			
+			if to_X01(slave_read) = '1' and prev_slave_read = '0' then
+				slave_readdata <= (others => '0');
+
+				case to_integer(unsigned(slave_address)) is
+				when 16#0# =>
+					slave_readdata(0) <= go;
+					slave_readdata(1) <= slave_irq_enable;
+				when 16#1# =>
+					if packet_send_state = packet_send_state_idle and ready_to_send_frame = false then
+						slave_readdata(0) <= '0';
+					else
+						slave_readdata(0) <= '1';
+					end if;
+				when 16#2# =>
+					slave_readdata(0) <= raw_slave_irq;
+				when 16#4# =>
+					slave_readdata <= std_logic_vector(resize(buffer_base_address, slave_readdata'length));
+				when 16#8# =>
+					slave_readdata <= std_logic_vector(resize(frame_width, slave_readdata'length));
+				when 16#9# =>
+					slave_readdata <= std_logic_vector(resize(frame_height, slave_readdata'length));
+				when 16#a# =>
+					slave_readdata(interlacing'length - 1 downto 0) <= std_logic_vector(interlacing);
+				when 16#18# =>
+					slave_readdata(0) <= horizontal_flip;
+					slave_readdata(1) <= vertical_flip;
+				when others =>
+				end case;
+			end if;
+			
+			prev_slave_read := to_X01(slave_read);
 		end if;
 	end process;
 	
@@ -498,7 +539,7 @@ begin
 		variable temp_frame_width: unsigned(requested_frame_width'length - 1 downto 0);
 	begin
 		if to_X01(safe_reset) = '1' then
-			buffer_base_address <= (others => '0');
+			requested_buffer_base_address <= (others => '0');
 			prev_slave_write := '0';
 			requested_frame_width <= (others => '0');
 			requested_frame_height <= (others => '0');
@@ -507,15 +548,15 @@ begin
 			clear_slave_irq <= '0';
 			interlacing <= "0011"; -- progressive
 			if default_horizontal_flip then
-				horizontal_flip <= '1'; 
+				requested_horizontal_flip <= '1'; 
 			else
-				horizontal_flip <= '0'; 
+				requested_horizontal_flip <= '0'; 
 			end if;
 			
 			if default_vertical_flip then
-				vertical_flip <= '1'; 
+				requested_vertical_flip <= '1'; 
 			else
-				vertical_flip <= '0';
+				requested_vertical_flip <= '0';
 			end if;
 			
 		elsif rising_edge(clock) then
@@ -531,7 +572,7 @@ begin
 						clear_slave_irq <= '1';
 					end if;
 				when 16#4# =>
-					buffer_base_address <= resize(unsigned(to_X01(slave_writedata)), memory_address_width);
+					requested_buffer_base_address <= resize(unsigned(to_X01(slave_writedata)), memory_address_width);
 				when 16#8# =>
 					temp_frame_width := unsigned(to_X01(slave_writedata(requested_frame_width'length - 1 downto 0)));
 					if temp_frame_width <= max_frame_width then
@@ -542,10 +583,10 @@ begin
 				when 16#9# =>
 					requested_frame_height <= unsigned(to_X01(slave_writedata(requested_frame_height'length - 1 downto 0)));
 				when 16#a# =>
-					interlacing <= unsigned(to_X01(slave_writedata(interlacing'length - 1 downto 0)));
+					interlacing <= to_X01(slave_writedata(interlacing'length - 1 downto 0));
 				when 16#18# =>
-					horizontal_flip <= to_X01(slave_writedata(0));
-					vertical_flip <= to_X01(slave_writedata(1));
+					requested_horizontal_flip <= to_X01(slave_writedata(0));
+					requested_vertical_flip <= to_X01(slave_writedata(1));
 				when others =>
 				end case;
 			end if;
