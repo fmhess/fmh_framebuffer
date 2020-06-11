@@ -54,18 +54,18 @@ end fmh_framebuffer;
 
 architecture fmh_framebuffer_arch of fmh_framebuffer is
 	function floor_log2(arg: unsigned) return natural is
-		variable floor_log2: natural;
+		variable result: natural := 0;
 	begin
 		assert arg /= 0;
 		
 		for i in arg'length - 1 downto 0 loop
-			if to_X01(arg(arg'low + i)) /= '0' then
-				floor_log2 := i;
+			if arg(arg'low + i) /= '0' then
+				result := i;
 				exit;
 			end if;
 		end loop;
 		
-		return floor_log2;
+		return result;
 	end function;
 
 	function ceil_log2(arg: unsigned) return natural is
@@ -572,18 +572,18 @@ begin
 						clear_slave_irq <= '1';
 					end if;
 				when 16#4# =>
-					requested_buffer_base_address <= resize(unsigned(to_X01(slave_writedata)), memory_address_width);
+					requested_buffer_base_address <= resize(unsigned(slave_writedata), memory_address_width);
 				when 16#8# =>
-					temp_frame_width := unsigned(to_X01(slave_writedata(requested_frame_width'length - 1 downto 0)));
+					temp_frame_width := unsigned(slave_writedata(requested_frame_width'length - 1 downto 0));
 					if temp_frame_width <= max_frame_width then
 						requested_frame_width <= temp_frame_width;
 					else
 						assert false report "Attempted to set frame width beyond maximum.";
 					end if;
 				when 16#9# =>
-					requested_frame_height <= unsigned(to_X01(slave_writedata(requested_frame_height'length - 1 downto 0)));
+					requested_frame_height <= unsigned(slave_writedata(requested_frame_height'length - 1 downto 0));
 				when 16#a# =>
-					interlacing <= to_X01(slave_writedata(interlacing'length - 1 downto 0));
+					interlacing <= slave_writedata(interlacing'length - 1 downto 0);
 				when 16#18# =>
 					requested_horizontal_flip <= to_X01(slave_writedata(0));
 					requested_vertical_flip <= to_X01(slave_writedata(1));
