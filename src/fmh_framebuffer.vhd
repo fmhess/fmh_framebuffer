@@ -1,9 +1,6 @@
 -- Author: Frank Mori Hess fmh6jj@gmail.com
 -- Copyright 2020 Fluke Corporation
 
--- TODO
--- support colors_per_beat < colors_per_pixel
-
 
 library IEEE;
 use ieee.std_logic_1164.all;
@@ -14,7 +11,6 @@ entity fmh_framebuffer is
 	generic(
 		bits_per_color: positive := 8;
 		colors_per_pixel: positive := 4;
-		colors_per_beat: positive := 4; -- number of colors sent per beat of the Avalong ST Video output
 		memory_bytes_per_pixel: positive := 4;
 		memory_address_width: positive := 32;
 		memory_burstcount_width: positive := 5;
@@ -46,7 +42,7 @@ entity fmh_framebuffer is
 		-- avalon st video out
 		video_out_ready: in std_logic;
 		video_out_valid: out std_logic;
-		video_out_data: out std_logic_vector(bits_per_color * colors_per_beat - 1 downto 0);
+		video_out_data: out std_logic_vector(bits_per_color * colors_per_pixel - 1 downto 0);
 		video_out_startofpacket: out std_logic;
 		video_out_endofpacket: out std_logic
 	);
@@ -126,8 +122,6 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 
 begin
 	
-	assert colors_per_beat >= colors_per_pixel report "colors_per_beat < colors_per_pixel not currently supported.";
-	
 	my_ocram : entity work.fmh_framebuffer_ocram
 		generic map (
 			address_width => cache_address_width,
@@ -161,9 +155,9 @@ begin
 	
 	-- generate videout out stream
 	process(safe_reset, clock)	
-		constant first_width_symbol_index: positive := colors_per_beat;
-		constant first_height_symbol_index: positive := colors_per_beat + 4;
-		constant interlacing_symbol_index: positive := colors_per_beat + 8;
+		constant first_width_symbol_index: positive := colors_per_pixel;
+		constant first_height_symbol_index: positive := colors_per_pixel + 4;
+		constant interlacing_symbol_index: positive := colors_per_pixel + 8;
 		variable symbol_index: unsigned(31 downto 0);
 		variable current_column: unsigned(frame_width'range);
 		variable current_row: unsigned(frame_height'range);
@@ -272,15 +266,15 @@ begin
 			else
 				if packet_send_state = packet_send_state_command then
 					if to_X01(video_out_ready) = '1' then
-						symbol_index_base <= symbol_index_base + colors_per_beat;
+						symbol_index_base <= symbol_index_base + colors_per_pixel;
 						video_out_valid <= '1';
 
 						if to_integer(beat_index) = 0 then
-							video_out_data(colors_per_beat * bits_per_color - 1 downto 4) <= (others => '0');
+							video_out_data(colors_per_pixel * bits_per_color - 1 downto 4) <= (others => '0');
 							video_out_data(3 downto 0) <= "1111";
 							video_out_startofpacket <= '1';
 						else
-							for i in 0 to colors_per_beat - 1 loop
+							for i in 0 to colors_per_pixel - 1 loop
 								symbol_index := symbol_index_base + i;
 
 								if symbol_index >= first_width_symbol_index and
@@ -343,7 +337,7 @@ begin
 				elsif packet_send_state = packet_send_state_video_data then
 					
 					if to_X01(video_out_ready) = '1' then
-						symbol_index_base <= symbol_index_base + colors_per_beat;
+						symbol_index_base <= symbol_index_base + colors_per_pixel;
 						video_out_valid <= '1';
 
 							

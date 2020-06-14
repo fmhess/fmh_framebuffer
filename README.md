@@ -16,11 +16,14 @@ It works.  It has been tested on a Cyclone V HPS system while
 clocked at 60 MHz.  It was connected to RAM through a 64 bit
 AXI bus.  Its video output sent 4 color channels of 8 bits
 per color to a VIP Clocked Video Output
-running at 800x480 resolution.
+running at 800x480 resolution with a 60 Hz frame rate.
 
 ### Limitations
-* All colors of a pixel must be transmitted in parallel on the same beat
-  (colors_per_beat must be a multiple of colors_per_pixel).
+* All the colors of exactly one pixel are output in parallel on each
+  beat of the video output stream.  So, no support for sending
+  the colors of a single pixel sequentially over multiple output beats,
+  and no support for sending multiple pixels in parallel on a
+  single output beat.
 * 90 degree rotations are not supported.
 * Progressive frames only, no interlaced.
 

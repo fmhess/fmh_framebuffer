@@ -10,7 +10,6 @@ end fmh_framebuffer_testbench;
      
 architecture behav of fmh_framebuffer_testbench is
 	constant bits_per_color: positive := 8;
-	constant colors_per_beat: positive := 4;
 	constant colors_per_pixel: positive := 4;
 	constant memory_address_width : positive := 32;
 	constant memory_burstcount_width : positive := 4;
@@ -37,7 +36,7 @@ architecture behav of fmh_framebuffer_testbench is
 	signal slave_irq: std_logic;
 	signal video_out_ready: std_logic;
 	signal video_out_valid: std_logic;
-	signal video_out_data: std_logic_vector(bits_per_color * colors_per_beat - 1 downto 0);
+	signal video_out_data: std_logic_vector(bits_per_color * colors_per_pixel - 1 downto 0);
 	signal video_out_startofpacket: std_logic;
 	signal video_out_endofpacket: std_logic;
 
@@ -72,7 +71,6 @@ architecture behav of fmh_framebuffer_testbench is
 	my_framebuffer : entity work.fmh_framebuffer
 		generic map (
 			bits_per_color => bits_per_color,
-			colors_per_beat => colors_per_beat,
 			colors_per_pixel => colors_per_pixel,
 			memory_address_width => memory_address_width,
 			memory_burstcount_width => memory_burstcount_width,
