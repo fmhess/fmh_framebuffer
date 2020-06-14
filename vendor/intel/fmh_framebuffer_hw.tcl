@@ -61,13 +61,6 @@ set_parameter_property colors_per_pixel TYPE POSITIVE
 set_parameter_property colors_per_pixel UNITS None
 set_parameter_property colors_per_pixel ALLOWED_RANGES 1:2147483647
 set_parameter_property colors_per_pixel HDL_PARAMETER true
-add_parameter colors_per_beat POSITIVE 4
-set_parameter_property colors_per_beat DEFAULT_VALUE 4
-set_parameter_property colors_per_beat DISPLAY_NAME colors_per_beat
-set_parameter_property colors_per_beat TYPE POSITIVE
-set_parameter_property colors_per_beat UNITS None
-set_parameter_property colors_per_beat ALLOWED_RANGES 1:2147483647
-set_parameter_property colors_per_beat HDL_PARAMETER true
 add_parameter memory_bytes_per_pixel POSITIVE 4
 set_parameter_property memory_bytes_per_pixel DEFAULT_VALUE 4
 set_parameter_property memory_bytes_per_pixel DISPLAY_NAME memory_bytes_per_pixel
@@ -194,7 +187,7 @@ set_interface_property video_out SVD_ADDRESS_GROUP ""
 
 add_interface_port video_out video_out_endofpacket endofpacket Output 1
 add_interface_port video_out video_out_startofpacket startofpacket Output 1
-add_interface_port video_out video_out_data data Output bits_per_color*colors_per_beat
+add_interface_port video_out video_out_data data Output bits_per_color*colors_per_pixel
 add_interface_port video_out video_out_ready ready Input 1
 add_interface_port video_out video_out_valid valid Output 1
 
