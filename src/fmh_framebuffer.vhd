@@ -55,7 +55,7 @@ architecture fmh_framebuffer_arch of fmh_framebuffer is
 		assert arg /= 0;
 		
 		for i in arg'length - 1 downto 0 loop
-			if arg(arg'low + i) /= '0' then
+			if to_X01(arg(arg'low + i)) /= '0' then
 				result := i;
 				exit;
 			end if;
